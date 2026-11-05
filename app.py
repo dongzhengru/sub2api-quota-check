@@ -1,0 +1,166 @@
+import asyncio
+import copy
+import math
+import os
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+import httpx
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / '.env')
+CACHE_SECONDS = 60
+
+
+class UsageService:
+    def __init__(self, client, email, password, account_id=1, tz='Asia/Shanghai'):
+        self.client = client
+        self.email = email
+        self.password = password
+        self.account_id = account_id
+        self.tz = tz
+        self.token = None
+        self.token_deadline = 0.0
+        self.cached = None
+        self.cache_deadline = 0.0
+        self.fetched_at = None
+        self.lock = asyncio.Lock()
+
+    @staticmethod
+    def unpack(response, stage='额度查询'):
+        if response.status_code == 423:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            code = payload.get('code') if isinstance(payload, dict) else None
+            if code == 'ADMIN_COMPLIANCE_ACK_REQUIRED':
+                raise HTTPException(423, '上游要求先完成管理员合规确认（ADMIN_COMPLIANCE_ACK_REQUIRED）。'
+                                    '请使用查询账号登录 Sub2API 管理后台，完成合规确认后重试。')
+            raise HTTPException(423, '上游%s被锁定（HTTP 423），请在 Sub2API 后台检查账号状态和待确认提示。' % stage)
+        if response.status_code == 403:
+            raise HTTPException(403, '账号无权查询额度，请配置有权限访问管理员账户额度接口的账号。')
+        if response.status_code == 401:
+            raise HTTPException(502, '上游认证失败，请检查登录账号和密码。')
+        if response.status_code >= 400:
+            raise HTTPException(502, '上游%s失败（HTTP %s）。' % (stage, response.status_code))
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict) or payload.get('code') != 0:
+                raise ValueError()
+            data = payload['data']
+            if not isinstance(data, dict):
+                raise ValueError()
+            return data
+        except (ValueError, KeyError):
+            raise HTTPException(502, '上游返回异常数据，请检查账号权限或稍后重试。')
+
+    async def login(self):
+        if not self.email or not self.password:
+            raise HTTPException(503, '请先在 .env 中配置 SUB2API_EMAIL 和 SUB2API_PASSWORD。')
+        response = await self.client.post('/api/v1/auth/login', json={
+            'email': self.email, 'password': self.password,
+        })
+        data = self.unpack(response, stage='登录')
+        token = data.get('access_token')
+        expires = data.get('expires_in', 86400)
+        if not isinstance(token, str) or not token or not isinstance(expires, (int, float)):
+            raise HTTPException(502, '登录响应缺少有效令牌。')
+        self.token = token
+        self.token_deadline = time.monotonic() + max(0, expires - 30)
+
+    async def fetch(self):
+        if not self.token or time.monotonic() >= self.token_deadline:
+            await self.login()
+        for attempt in range(2):
+            response = await self.client.get(
+                '/api/v1/admin/accounts/%s/usage' % self.account_id,
+                params={'source': 'active', 'force': 'true', 'timezone': self.tz},
+                headers={'Authorization': 'Bearer ' + self.token},
+            )
+            if response.status_code == 401 and attempt == 0:
+                self.token = None
+                await self.login()
+                continue
+            data = self.unpack(response)
+            windows = {}
+            for key in ('five_hour', 'seven_day'):
+                window = data.get(key)
+                if not isinstance(window, dict):
+                    raise HTTPException(502, '上游未返回完整的 5 小时和 7 天额度。')
+                used = window.get('utilization')
+                reset = window.get('resets_at')
+                if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) or used < 0:
+                    raise HTTPException(502, '上游额度百分比无效。')
+                try:
+                    parsed = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+                    if parsed.tzinfo is None:
+                        raise ValueError()
+                except (AttributeError, TypeError, ValueError):
+                    raise HTTPException(502, '上游重置时间无效。')
+                windows[key] = {
+                    'used_percent': used,
+                    'remaining_percent': max(0, 100 - used),
+                    'resets_at': reset,
+                    'window_stats': window.get('window_stats'),
+                }
+            return {'updated_at': data.get('updated_at'), **windows}
+
+    def snapshot(self, hit):
+        return {**copy.deepcopy(self.cached), 'timezone': self.tz, 'cache': {
+            'hit': hit, 'ttl_seconds': CACHE_SECONDS,
+            'remaining_seconds': max(0, math.ceil(self.cache_deadline - time.monotonic())),
+            'fetched_at': self.fetched_at,
+        }}
+
+    async def get(self):
+        if self.cached is not None and time.monotonic() < self.cache_deadline:
+            return self.snapshot(True)
+        # Double check after taking the lock: simultaneous misses share one query.
+        async with self.lock:
+            if self.cached is not None and time.monotonic() < self.cache_deadline:
+                return self.snapshot(True)
+            try:
+                result = await self.fetch()
+            except httpx.TimeoutException:
+                raise HTTPException(504, '上游查询超时，请稍后重试。')
+            except httpx.RequestError:
+                raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
+            self.cached = result
+            self.fetched_at = datetime.now(timezone.utc).isoformat()
+            self.cache_deadline = time.monotonic() + CACHE_SECONDS
+            return self.snapshot(False)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    async with httpx.AsyncClient(
+        base_url=os.getenv('SUB2API_BASE_URL', 'https://gateway.zhengru.top').rstrip('/'),
+        timeout=25.0, follow_redirects=False,
+    ) as client:
+        app.state.usage = UsageService(
+            client, os.getenv('SUB2API_EMAIL'), os.getenv('SUB2API_PASSWORD'),
+            int(os.getenv('SUB2API_ACCOUNT_ID', '1')), os.getenv('SUB2API_TIMEZONE', 'Asia/Shanghai'),
+        )
+        yield
+
+
+app = FastAPI(title='Sub2API 额度面板', lifespan=lifespan)
+app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
+
+
+@app.get('/')
+async def index():
+    return FileResponse(ROOT / 'static' / 'index.html', headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/usage')
+async def usage():
+    from fastapi.responses import JSONResponse
+    return JSONResponse(await app.state.usage.get(), headers={'Cache-Control': 'no-store'})
