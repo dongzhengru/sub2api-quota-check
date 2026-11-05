@@ -1,0 +1,84 @@
+# managed-by: luna-paas-cloud
+name: Luna PaaS Cloud 应用构建
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      initial_deploy:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  prepare:
+    name: 准备构建环境
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[paas-skip]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源代码
+        uses: actions/checkout@v4
+      - name: 校验构建配置
+        env:
+          DOCKERFILE: Dockerfile
+          BUILD_CONTEXT: .
+        run: |
+          test -f "$DOCKERFILE"
+          test -d "$BUILD_CONTEXT"
+  build:
+    name: 构建并推送镜像
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源代码
+        uses: actions/checkout@v4
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 校验 Python 应用
+        working-directory: "."
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m compileall .
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 登录容器镜像仓库
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.PAAS_ACR_REGISTRY }}
+          username: ${{ secrets.PAAS_ACR_USERNAME }}
+          password: ${{ secrets.PAAS_ACR_PASSWORD }}
+      - name: 生成镜像标签
+        id: image
+        shell: bash
+        run: echo "value=${{ secrets.PAAS_IMAGE_REPOSITORY }}:${GITHUB_SHA}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.value }}
+  notify:
+    name: 同步构建结果
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源代码
+        uses: actions/checkout@v4
+      - name: 通知 Luna PaaS Cloud
+        env:
+          CALLBACK_TOKEN: ${{ secrets.PAAS_CALLBACK_TOKEN }}
+          JOB_STATUS: ${{ needs.prepare.result == 'failure' && 'failure' || needs.prepare.result == 'cancelled' && 'cancelled' || needs.build.result }}
+          IMAGE: ${{ needs.build.result == 'success' && format('{0}:{1}-{2}', secrets.PAAS_IMAGE_REPOSITORY, github.sha, github.run_id) || '' }}
+          INITIAL: ${{ inputs.initial_deploy || 'false' }}
+        shell: bash
+        run: |
+          title=$(git log -1 --format=%s)
+          payload=$(jq -n --arg repo "${GITHUB_REPOSITORY}" --arg ref "${GITHUB_REF_NAME}" --arg sha "${GITHUB_SHA}" --arg title "$title" --arg image "$IMAGE" --arg status "$JOB_STATUS" --arg initial "$INITIAL" --argjson run_id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" '{repository:$repo,ref:$ref,commit_sha:$sha,title:$title,image:$image,status:$status,initial:($initial == "true"),run_id:$run_id,run_attempt:$attempt,html_url:("https://github.com/"+$repo+"/actions/runs/"+($run_id|tostring))}')
+          for delay in 0 2 5 10; do sleep "$delay"; curl --fail-with-body -sS -X POST -H "Authorization: Bearer $CALLBACK_TOKEN" -H "Content-Type: application/json" --data "$payload" https://paas.zhengru.top/api/callbacks/github/actions/1d8dee92-717f-4785-91ef-dfc34aa66dc4 && exit 0; done
+          exit 1
