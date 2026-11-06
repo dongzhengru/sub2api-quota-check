@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CDP, isAppTarget, listTargets } from './cdp.mjs';
-import { UsagePoller } from './usage.mjs';
+import { UsagePoller, fetchUserBreakdown } from './usage.mjs';
 
 const exec = promisify(execFile);
 export const DISPOSE = 'window.__zhengruQuotaSidebarV1?.dispose(); true';
@@ -86,7 +86,14 @@ export async function runDaemon({ port, selector, signal, log = console.log }) {
               sessions.set(target.id, client);
               fresh = true;
             }
-            const state = await client.evaluate(`(${TRUSTED_PAGE}) ? ({ installed: !!window.__zhengruQuotaSidebarV1, refresh: window.__zhengruQuotaSidebarV1?.takeRefreshRequest?.() || false }) : null`);
+            const state = await client.evaluate(`(${TRUSTED_PAGE}) ? ({ installed: !!window.__zhengruQuotaSidebarV1, refresh: window.__zhengruQuotaSidebarV1?.takeRefreshRequest?.() || false, usage: window.__zhengruQuotaSidebarV1?.takeUsageRequest?.() || null }) : null`);
+            if (state?.usage) {
+              const request = state.usage;
+              // Do not block quota refresh or other windows on a ranking query.
+              void fetchUserBreakdown(request).then(
+                data => ({id:request.id,data}), error => ({id:request.id,error:error.message || '用量查询失败'})
+              ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveUsage?.(${JSON.stringify(result)})`)).catch(() => {});
+            }
             if (state?.refresh) nextUsage = poller.refresh({ force: true });
             if (state) {
               const snapshot = JSON.stringify(poller.snapshot);

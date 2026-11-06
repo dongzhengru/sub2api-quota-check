@@ -34,6 +34,37 @@ try {
   assert.equal((await inject(snapshot)).mounted, true);
   assert.equal(await cdp.evaluate(`document.querySelectorAll('#zhengru-quota-sidebar').length`), 1);
   assert.equal(await cdp.evaluate(`document.querySelector('#zhengru-quota-sidebar').shadowRoot.querySelector('b').textContent`), '70%');
+  // Usage stays hidden and makes no request until explicitly opened.
+  const ui = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`), false);
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`), null);
+  await cdp.evaluate(`${ui}.querySelector('.usage-link').click()`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`), true);
+  let query = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
+  assert.equal(query.start_date,query.end_date);assert.equal(query.page,1);
+  const usageResult = { id:query.id, data:{...query,timezone:'Asia/Shanghai',has_more:true,users:[{user_id:1,email:'<img src=x onerror=alert(1)>',requests:225,input_tokens:1254036,output_tokens:106773,cache_tokens:16050688,total_tokens:17411497,cost:4.57638018}]} };
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /17.41 M/);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$4.576/);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
+  await cdp.evaluate(`${ui}.querySelector('.usage-next').click()`);
+  query=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);assert.equal(query.page,2);
+  await cdp.evaluate(`${ui}.querySelector('[data-days="7"]').click()`);
+  const weekQuery=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
+  assert.equal(weekQuery.page,1);assert.equal((Date.parse(weekQuery.end_date)-Date.parse(weekQuery.start_date))/86400000,6);
+  // Late results must not overwrite the latest filter.
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody').children.length`),0);
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({id:weekQuery.id,error:'模拟查询失败'})})`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.usage-error').textContent`),'模拟查询失败');
+  await cdp.evaluate(`${ui}.querySelector('.usage-filters').requestSubmit()`);
+  query=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({...usageResult,id:query.id,data:{...usageResult.data,...query}})})`);
+  await cdp.call('Page.enable');
+  const usageShot=await cdp.call('Page.captureScreenshot',{format:'png'});
+  await writeFile(new URL('../preview-usage.png',import.meta.url),Buffer.from(usageShot.data,'base64'));
+  await cdp.evaluate(`${ui}.querySelector('.usage-close').click()`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`),false);
   const box = await cdp.evaluate(`JSON.stringify(document.querySelector('#zhengru-quota-sidebar').getBoundingClientRect().toJSON())`);
   const rect = JSON.parse(box);
   assert.ok(rect.width > 180 && rect.right <= 260 && rect.bottom <= 760, `Widget outside sidebar: ${box}`);

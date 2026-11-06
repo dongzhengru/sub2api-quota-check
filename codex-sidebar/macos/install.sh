@@ -21,8 +21,9 @@ if [ -e "$quota_dest" ]; then
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
+const processOptions = { env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' } };
 const expected = process.argv[2];
-const { stdout } = await exec('/bin/ps', ['-axo', 'pid=,comm=']);
+const { stdout } = await exec('/bin/ps', ['-ww', '-axo', 'pid=,comm='], processOptions);
 for (const line of stdout.split('\n')) {
   const match = line.match(/^\s*(\d+)\s+(.+)$/);
   if (!match || match[2] !== expected) continue;
@@ -32,7 +33,7 @@ for (const line of stdout.split('\n')) {
   for (let i = 0; i < 40; i++) {
     await new Promise(resolve => setTimeout(resolve, 100));
     try {
-      const result = await exec('/bin/ps', ['-p', String(pid), '-o', 'comm=']);
+      const result = await exec('/bin/ps', ['-ww', '-p', String(pid), '-o', 'comm='], processOptions);
       if (result.stdout.trim() !== expected) { exited = true; break; }
     } catch { exited = true; break; }
   }

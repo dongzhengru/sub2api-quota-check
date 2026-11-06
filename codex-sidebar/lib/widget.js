@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 3) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 4) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -14,6 +14,7 @@ function installQuotaWidget(snapshot, options = {}) {
   let refreshRequested = false;
   let waitingForRefresh = false;
   let lastContact = Date.now();
+  let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
   const host = document.createElement('div');
   host.id = HOST;
   host.style.cssText = 'display:block;flex:0 0 auto;min-width:0;width:auto;margin:5px 10px;position:relative;-webkit-app-region:no-drag;';
@@ -23,6 +24,8 @@ function installQuotaWidget(snapshot, options = {}) {
       :host{color:inherit;font-family:inherit;font-size:12px;color-scheme:light dark}
       *{box-sizing:border-box}
       .card{padding:8px 9px;border:1px solid color-mix(in srgb,currentColor 10%,transparent);border-radius:9px;background:color-mix(in srgb,currentColor 2%,transparent);line-height:1.35;user-select:none}
+      .actions{display:flex;align-items:center;gap:5px}.usage-link{border:0;background:transparent;color:inherit;font:inherit;font-size:10px;opacity:.65;cursor:pointer;padding:3px}.usage-link:hover{opacity:1;text-decoration:underline}
+      dialog{color:inherit;background:Canvas;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:14px;padding:24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog::backdrop{background:#0006}.dialog-head,.usage-filters,.usage-pages{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.dialog-head{justify-content:space-between}.dialog-head h2{font-size:16px;margin:0}.usage-filters{margin:18px 0}.usage-pages{justify-content:flex-end;margin-top:16px}dialog button,dialog input,dialog select{font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:6px;padding:6px 9px}dialog button{cursor:pointer}dialog button:disabled{opacity:.4;cursor:default}dialog button.active{background:#16845f;color:#fff}.usage-scroll{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:11px 9px;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent);text-align:right}th:first-child,td:first-child{text-align:left}th{font-weight:500;opacity:.65}.usage-status{opacity:.65;margin:10px 0}.usage-error{color:#df8842}
       .head,.label{display:flex;justify-content:space-between;align-items:center;gap:8px}
       .title{font-weight:600;font-size:11px;letter-spacing:.02em}
       .refresh{display:grid;place-items:center;width:20px;height:20px;padding:3px;border:0;border-radius:5px;background:transparent;color:inherit;opacity:.55;cursor:pointer}
@@ -38,11 +41,16 @@ function installQuotaWidget(snapshot, options = {}) {
       @media(prefers-reduced-motion:reduce){.fill{transition:none}.refresh svg{animation:none!important}}
     </style>
     <section class="card" aria-label="Zhengru 网关额度">
-      <div class="head"><span class="title">网关额度</span><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+      <div class="head"><span class="title">网关额度</span><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
-    </section>`;
+    </section>
+    <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行">关闭</button></div>
+    <form class="usage-filters"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></form>
+    <p class="usage-status" role="status" aria-live="polite"></p><p class="usage-error" role="alert" hidden></p>
+    <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
+    <div class="usage-pages"><label>每页 <select><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const formatPercent = n => `${Number(n.toFixed(1))}%`;
   const formatDate = value => new Date(value).toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai', hour12: false,
@@ -63,6 +71,7 @@ function installQuotaWidget(snapshot, options = {}) {
     return (days ? `${days}天` : '') + (hours ? `${hours}时` : '') + `${minutes}分后`;
   }
   function paint() {
+    if (usageDeadline && Date.now()>usageDeadline) receiveUsage({id:usageId,error:'用量查询超时，请检查后台连接后重试。'});
     const disconnected = Date.now() - lastContact > 45_000;
     const stale = !!current?.error || disconnected || (current?.receivedAt != null && Date.now() - current.receivedAt > 270_000);
     root.querySelector('.card').classList.toggle('stale', stale);
@@ -91,6 +100,56 @@ function installQuotaWidget(snapshot, options = {}) {
     foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接') : '';
     foot.title = stale ? (current?.error || '本机额度程序已断开') : '';
   }
+  const dialog = root.querySelector('dialog');
+  const usageStatus = root.querySelector('.usage-status');
+  const usageError = root.querySelector('.usage-error');
+  const startInput = root.querySelector('.usage-start'), endInput = root.querySelector('.usage-end');
+  function quickRange(days) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).formatToParts(new Date()).map(p => [p.type,p.value]));
+    endInput.value = `${parts.year}-${parts.month}-${parts.day}`;
+    const start = new Date(endInput.value+'T00:00:00Z'); start.setUTCDate(start.getUTCDate()-days+1); startInput.value=start.toISOString().slice(0,10);
+    root.querySelectorAll('[data-days]').forEach(b => { const active=Number(b.dataset.days)===days; b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active)); });
+  }
+  function queryUsage(page=1, apply=false) {
+    if(apply) {
+      if(!startInput.value || !endInput.value || startInput.value>endInput.value) { usageError.hidden=false;usageError.textContent='开始日期不能晚于结束日期。';return; }
+      usageRange={start_date:startInput.value,end_date:endInput.value};
+    }
+    usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('select').value)};
+    usageDeadline=Date.now()+30000;
+    usageError.hidden=true;usageStatus.textContent='正在查询…';root.querySelector('tbody').replaceChildren();
+    root.querySelector('.usage-prev').disabled=true;root.querySelector('.usage-next').disabled=true;
+  }
+  function receiveUsage(result) {
+    if(result.id!==usageId || !dialog.open)return;
+    usageDeadline=0;
+    if(result.error) {usageStatus.textContent='查询失败，请点击查询重试。';usageError.textContent=result.error;usageError.hidden=false;return;}
+    const data=result.data;usagePage=data.page;
+    for(const user of data.users) {
+      const row=document.createElement('tr');
+      for(const key of ['email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']) {
+        const cell=document.createElement('td'),n=user[key];
+        if(key==='email')cell.textContent=n || `用户 ${user.user_id}`;
+        else if(!Number.isFinite(n))cell.textContent='—';
+        else {cell.title=String(n);cell.textContent=key==='cost'?'$'+n.toFixed(3):key.endsWith('tokens')?(Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US')):n.toLocaleString('en-US');}
+        row.append(cell);
+      }
+      root.querySelector('tbody').append(row);
+    }
+    usageStatus.textContent=`${data.start_date} 至 ${data.end_date}（含首尾日期，${data.timezone}） · ${data.users.length ? '本页 '+data.users.length+' 位用户':'暂无用量记录'}`;
+    root.querySelector('.usage-page').textContent=`第 ${usagePage} 页`;
+    root.querySelector('.usage-prev').disabled=usagePage<=1;root.querySelector('.usage-next').disabled=!data.has_more;
+  }
+  root.querySelector('.usage-link').addEventListener('click',()=>{dialog.showModal();quickRange(1);queryUsage(1,true);});
+  root.querySelector('.usage-close').addEventListener('click',()=>dialog.close());
+  dialog.addEventListener('close',()=>{usageId++;usageRequest=null;usageDeadline=0;});
+  dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
+  root.querySelector('.usage-filters').addEventListener('submit',e=>{e.preventDefault();queryUsage(1,true);});
+  root.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{quickRange(Number(b.dataset.days));queryUsage(1,true);}));
+  for(const input of [startInput,endInput]) input.addEventListener('input',()=>root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');}));
+  root.querySelector('select').addEventListener('change',()=>queryUsage(1));
+  root.querySelector('.usage-prev').addEventListener('click',()=>queryUsage(usagePage-1));
+  root.querySelector('.usage-next').addEventListener('click',()=>queryUsage(usagePage+1));
   function findSidebar() {
     // Verified in the installed unified ChatGPT/Codex client, then older Codex.
     const selectors = options.selector ? [options.selector] : [
@@ -135,10 +194,12 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 3,
+    version: 4,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
+    receiveUsage,
+    takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},
     takeRefreshRequest() { const requested = refreshRequested; refreshRequested = false; return requested; },
-    dispose() { disposed = true; observer.disconnect(); clearInterval(timer); host.remove(); delete window[KEY]; },
+    dispose() { disposed = true; observer.disconnect(); clearInterval(timer); dialog.close(); host.remove(); delete window[KEY]; },
   };
   mount(); paint();
   return status();

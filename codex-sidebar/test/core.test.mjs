@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateUsage, fetchUsage, UsagePoller, ENDPOINT } from '../lib/usage.mjs';
+import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
 import { assertAppListener } from '../lib/daemon.mjs';
 
@@ -120,4 +120,40 @@ test('CDP request timeouts do not leak pending promises', async () => {
   const cdp = new CDP(new FakeSocket(), 10);
   await assert.rejects(cdp.call('Runtime.enable'), /超时/);
   assert.equal(cdp.pending.size, 0); cdp.close();
+});
+
+
+test('ranking fetch sends date and pagination to fixed gateway, validates and strips fields', async () => {
+  const query={start_date:'2026-11-01',end_date:'2026-11-06',page:2,page_size:20};
+  const result=await fetchUserBreakdown(query,{fetcher:async (url,options)=>{
+    assert.equal(new URL(url).pathname,'/api/quota/api/user-breakdown');
+    assert.equal(new URL(url).searchParams.get('page'),'2');
+    assert.equal(options.redirect,'error');
+    return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,users:[{email:'test@example.com',cost:1.23456,secret:'drop'}]});
+  }});
+  assert.equal(result.users[0].secret,undefined);assert.equal(result.users[0].cost,1.23456);
+  await assert.rejects(fetchUserBreakdown({...query,start_date:'2026-02-30'}),/参数无效/);
+  await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({...query,users:[]})}),/数据无效/);
+  await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({detail:'管理员权限不足'},{status:403})}),/管理员权限不足/);
+});
+
+
+test('daemon identity uses UTF-8 even under Finder C locale and preserves instance boundaries', async () => {
+  const { matchesDaemonProcess } = await import('../lib/process.mjs');
+  const cli='/Users/example/Applications/Codex 额度助手.app/Contents/Resources/engine/cli.mjs';
+  const state={pid:123,instance:'abc-123'};
+  const original=process.env.LC_ALL;
+  process.env.LC_ALL='C';
+  try {
+    const run=async (file,args,options)=>{
+      assert.equal(file,'/bin/ps');assert.ok(args.includes('-ww'));
+      assert.equal(options.env.LC_ALL,'en_US.UTF-8');
+      assert.equal(options.env.LANG,'en_US.UTF-8');
+      return {stdout:`node ${cli} run --port 9341 --instance abc-123\n`};
+    };
+    assert.equal(await matchesDaemonProcess(state,cli,run),true);
+    assert.equal(await matchesDaemonProcess({...state,instance:'abc'},cli,run),false);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`})),true);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');}),false);
+  } finally {if(original===undefined)delete process.env.LC_ALL;else process.env.LC_ALL=original;}
 });

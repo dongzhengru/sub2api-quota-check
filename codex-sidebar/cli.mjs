@@ -7,6 +7,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertAppListener, removeWidgets, runDaemon } from './lib/daemon.mjs';
 import { listTargets, isAppTarget } from './lib/cdp.mjs';
+import { matchesDaemonProcess, processOptions } from './lib/process.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -27,13 +28,7 @@ async function readState() {
   try { return JSON.parse(await readFile(STATE_FILE, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
-async function matchesProcess(state) {
-  if (!state || !Number.isInteger(state.pid) || state.pid <= 1 || !state.instance) return false;
-  try {
-    const { stdout } = await exec('/bin/ps', ['-p', String(state.pid), '-o', 'command='], { timeout: 3000 });
-    return stdout.includes(`${CLI} run `) && stdout.includes(`--instance ${state.instance}`);
-  } catch { return false; }
-}
+const matchesProcess = state => matchesDaemonProcess(state, CLI);
 async function clearState(pid) {
   if ((await readState())?.pid === pid) await unlink(STATE_FILE).catch(() => {});
 }
@@ -50,7 +45,7 @@ async function appBundle() {
 async function launch() {
   try { await assertAppListener(port); return; } catch { /* Not already listening. */ }
   const app = await appBundle();
-  const { stdout } = await exec('/bin/ps', ['-axo', 'comm='], { timeout: 3000 });
+  const { stdout } = await exec('/bin/ps', ['-ww', '-axo', 'comm='], processOptions());
   if (stdout.split('\n').some(line => line.trim() === app.exe)) {
     throw new Error('客户端正在运行但未开启调试连接。请先用 ⌘Q 完全退出客户端，再从额度助手菜单点击「启动客户端与额度」。程序不会强制结束聊天。');
   }
