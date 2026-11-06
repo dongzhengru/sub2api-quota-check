@@ -115,3 +115,46 @@ def test_non_json_locked_login():
         UsageService.unpack(response, stage='登录')
     assert exc.value.status_code == 423
     assert '登录被锁定' in exc.value.detail
+
+
+def test_user_breakdown_pagination_and_relogin():
+    from datetime import date
+    async def run():
+        limits = []
+        attempts = 0
+        async def handler(request):
+            nonlocal attempts
+            if request.url.path.endswith('/login'):
+                return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'renewed'}})
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(401)
+            assert request.headers['authorization'] == 'Bearer renewed'
+            assert request.url.params['start_date'] == '2026-11-01'
+            assert request.url.params['end_date'] == '2026-11-06'
+            assert request.url.params['timezone'] == 'Asia/Shanghai'
+            assert request.url.params['sort_by'] == 'total_tokens'
+            limit = int(request.url.params['limit'])
+            limits.append(limit)
+            return httpx.Response(200, json={'code': 0, 'data': {
+                'users': [{'user_id': i} for i in range(55)][:limit]}})
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            service.token, service.token_deadline = 'expired', float('inf')
+            pages = [await service.user_breakdown(date(2026, 11, 1), date(2026, 11, 6), p, 20)
+                     for p in (1, 2, 3)]
+            assert limits == [21, 41, 61]
+            assert [p['has_more'] for p in pages] == [True, True, False]
+            assert [u['user_id'] for p in pages for u in p['users']] == list(range(55))
+    asyncio.run(run())
+
+
+def test_user_breakdown_validation():
+    with TestClient(app) as client:
+        for params in ({'start_date': 'bad', 'end_date': '2026-11-06'},
+                       {'start_date': '2026-11-01', 'end_date': '2026-11-06', 'page': 0},
+                       {'start_date': '2026-11-01', 'end_date': '2026-11-06', 'page_size': 101}):
+            assert client.get('/api/user-breakdown', params=params).status_code == 422
+        assert client.get('/api/user-breakdown', params={
+            'start_date': '2026-11-07', 'end_date': '2026-11-06'}).status_code == 400
+        assert client.get('/api/config').json()['timezone'] == app.state.usage.tz

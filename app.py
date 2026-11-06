@@ -4,12 +4,12 @@ import math
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -31,6 +31,41 @@ class UsageService:
         self.cache_deadline = 0.0
         self.fetched_at = None
         self.lock = asyncio.Lock()
+        self.breakdown_lock = asyncio.Lock()
+
+    async def user_breakdown(self, start_date, end_date, page, page_size):
+        if start_date > end_date:
+            raise HTTPException(400, '开始日期不能晚于结束日期。')
+        # The upstream exposes a top-N limit, not a page/offset contract.
+        # Request one extra row so the UI can accurately enable the next page.
+        offset = (page - 1) * page_size
+        async with self.breakdown_lock:
+            try:
+                if not self.token or time.monotonic() >= self.token_deadline:
+                    await self.login()
+                for attempt in range(2):
+                    response = await self.client.get(
+                        '/api/v1/admin/dashboard/user-breakdown',
+                        params={'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                                'sort_by': 'total_tokens', 'limit': offset + page_size + 1,
+                                'timezone': self.tz},
+                        headers={'Authorization': 'Bearer ' + self.token},
+                    )
+                    if response.status_code == 401 and attempt == 0:
+                        await self.login()
+                        continue
+                    data = self.unpack(response, stage='用户用量查询')
+                    users = data.get('users')
+                    if not isinstance(users, list) or any(not isinstance(user, dict) for user in users):
+                        raise HTTPException(502, '上游返回的用户用量数据无效。')
+                    return {'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                            'timezone': self.tz, 'users': users[offset:offset + page_size],
+                            'page': page, 'page_size': page_size,
+                            'has_more': len(users) > offset + page_size}
+            except httpx.TimeoutException:
+                raise HTTPException(504, '上游查询超时，请稍后重试。')
+            except httpx.RequestError:
+                raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
 
     @staticmethod
     def unpack(response, stage='额度查询'):
@@ -164,3 +199,17 @@ async def index():
 async def usage():
     from fastapi.responses import JSONResponse
     return JSONResponse(await app.state.usage.get(), headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/config')
+async def config():
+    return {'timezone': app.state.usage.tz}
+
+
+@app.get('/api/user-breakdown')
+async def user_breakdown(start_date: date, end_date: date,
+                         page: int = Query(1, ge=1, le=10000),
+                         page_size: int = Query(20, ge=1, le=100)):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(await app.state.usage.user_breakdown(start_date, end_date, page, page_size),
+                        headers={'Cache-Control': 'no-store'})

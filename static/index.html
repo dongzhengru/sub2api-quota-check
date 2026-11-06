@@ -27,6 +27,13 @@ main{width:100%;max-width:1000px;padding:40px 24px}
 .countdown{font-size:11px;color:var(--muted);text-align:right;margin-top:9px;line-height:1.6}
 .error{color:#9a4a35;font-size:12px;line-height:1.7;margin:20px 0 0;overflow-wrap:anywhere}
 [hidden]{display:none!important}
+.breakdown{margin-top:24px;padding:28px}
+.filters,.dates,.pagination{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.filters{margin:22px 0 12px}.dates{margin-bottom:18px}
+button,input,select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:8px 12px}
+button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#4e8767}button:disabled{opacity:.45;cursor:default}
+.dates label,.pagination,.status{font-size:12px;color:var(--muted)}
+.tablewrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:14px 12px;border-bottom:1px solid var(--line);text-align:right}th{font-weight:500;color:var(--muted)}th:first-child,td:first-child{text-align:left}td small{display:block;color:var(--muted);margin-top:4px}.pagination{justify-content:flex-end;margin-top:18px}.status{margin:12px 0;line-height:1.7}
 @media(max-width:660px){main{max-width:460px;padding:24px 16px}.cards{grid-template-columns:1fr;gap:16px}.card{padding:26px}.number{font-size:64px}.metric{margin-top:26px}}
 @media(prefers-reduced-motion:reduce){.fill{transition:none}}
 </style>
@@ -37,6 +44,15 @@ main{width:100%;max-width:1000px;padding:40px 24px}
 <section class="card" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="5 小时已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 <section class="card seven" id="seven_day"><div class="cardhead"><h2>7 天额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="7 天已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 </div>
+<section class="card breakdown" aria-labelledby="breakdown-title">
+<div class="cardhead"><h2 id="breakdown-title">用户 Token 用量</h2><span class="status" id="stats-zone"></span></div>
+<div class="filters" aria-label="快捷日期"><button type="button" data-days="1" class="active" aria-pressed="true">1 天</button><button type="button" data-days="3" aria-pressed="false">3 天</button><button type="button" data-days="7" aria-pressed="false">7 天</button></div>
+<form id="stats-form" class="dates"><label>开始日期 <input type="date" id="start-date" required></label><label>结束日期 <input type="date" id="end-date" required></label><button type="submit">查询</button></form>
+<p id="stats-error" class="error" role="alert" hidden></p>
+<p id="stats-status" class="status" role="status" aria-live="polite">等待查询</p>
+<div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col">总 Token ↓</th><th scope="col" title="cost">费用 ($)</th></tr></thead><tbody id="stats-body"></tbody></table></div>
+<div class="pagination"><label>每页 <select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" id="prev-page" disabled>上一页</button><span id="page-label">第 1 页</span><button type="button" id="next-page" disabled>下一页</button></div>
+</section>
 </main>
 <script>
 let latest=null, busy=false;
@@ -66,15 +82,80 @@ async function load(){
    card.querySelector('time').dateTime=w.resets_at;
   }
   latest=data;
-  document.querySelectorAll('.error').forEach(el=>{el.hidden=true;el.textContent='';});
+  document.querySelectorAll('.cards .error').forEach(el=>{el.hidden=true;el.textContent='';});
   tick();
  }catch(error){
-  document.querySelectorAll('.error').forEach(el=>{
+  document.querySelectorAll('.cards .error').forEach(el=>{
    el.textContent=(latest?'更新失败，当前为上次查询数据。':'')+error.message;
    el.hidden=false;
   });
  }finally{busy=false;}
 }
+const startInput=document.getElementById('start-date'),endInput=document.getElementById('end-date');
+let statsZone='Asia/Shanghai',statsPage=1,statsSize=20,statsRange=null,statsRequest=0,statsController=null;
+function formatTokens(value){
+ if(!Number.isFinite(value))return '—';
+ // Select units after rounding so values near a boundary do not show 1,000 K.
+ if(Math.abs(value)>=999995)return (value/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M';
+ if(Math.abs(value)>=1000)return (value/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K';
+ return value.toLocaleString('zh-CN');
+}
+function formatCost(value){
+ return Number.isFinite(value)?'$'+value.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3}):'—';
+}
+function setQuickRange(days){
+ const parts=new Intl.DateTimeFormat('en-US',{timeZone:statsZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+ const part=t=>parts.find(p=>p.type===t).value;
+ const end=`${part('year')}-${part('month')}-${part('day')}`;
+ const start=new Date(end+'T00:00:00Z');start.setUTCDate(start.getUTCDate()-days+1);
+ startInput.value=start.toISOString().slice(0,10);endInput.value=end;
+ document.querySelectorAll('[data-days]').forEach(b=>{const active=Number(b.dataset.days)===days;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
+}
+function applyRange(){
+ if(!startInput.value||!endInput.value||startInput.value>endInput.value){
+  const error=document.getElementById('stats-error');error.textContent='请选择有效日期，开始日期不能晚于结束日期。';error.hidden=false;return;
+ }
+ statsRange={start_date:startInput.value,end_date:endInput.value};loadStats(1);
+}
+async function loadStats(page){
+ if(!statsRange)return;
+ const request=++statsRequest;
+ if(statsController)statsController.abort();statsController=new AbortController();
+ const status=document.getElementById('stats-status'),error=document.getElementById('stats-error');
+ error.hidden=true;status.textContent='正在查询…';
+ document.getElementById('stats-body').replaceChildren();
+ document.getElementById('stats-table').setAttribute('aria-busy','true');
+ document.getElementById('prev-page').disabled=true;document.getElementById('next-page').disabled=true;
+ try{
+  const params=new URLSearchParams({...statsRange,page,page_size:statsSize});
+  const response=await fetch('/api/user-breakdown?'+params,{cache:'no-store',signal:statsController.signal});
+  const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'用户用量查询失败');
+  if(request!==statsRequest)return;
+  const body=document.getElementById('stats-body');
+  for(const user of data.users){
+   const row=document.createElement('tr'),identity=document.createElement('td'),id=document.createElement('small');
+   identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;identity.append(id);row.append(identity);
+   for(const key of ['requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']){
+    const cell=document.createElement('td'),value=user[key];
+    cell.textContent=key.endsWith('tokens')?formatTokens(value):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):formatCost(value);
+    if(Number.isFinite(value))cell.title=value.toLocaleString('en-US',{maximumFractionDigits:20});
+    row.append(cell);
+   }
+   body.append(row);
+  }
+  statsPage=data.page;document.getElementById('page-label').textContent=`第 ${statsPage} 页`;
+  document.getElementById('prev-page').disabled=statsPage<=1;document.getElementById('next-page').disabled=!data.has_more;
+  status.textContent=`${data.start_date} 至 ${data.end_date}（含首尾日期） · ${data.users.length?'本页 '+data.users.length+' 位用户':'暂无用量记录'}`;
+ }catch(e){if(request!==statsRequest)return;error.textContent=e.message;error.hidden=false;status.textContent='查询失败，请点击查询重试。';}
+ finally{if(request===statsRequest)document.getElementById('stats-table').setAttribute('aria-busy','false');}
+}
+document.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{setQuickRange(Number(b.dataset.days));applyRange();}));
+for(const input of [startInput,endInput])input.addEventListener('input',()=>document.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');}));
+document.getElementById('stats-form').addEventListener('submit',e=>{e.preventDefault();applyRange();});
+document.getElementById('page-size').addEventListener('change',e=>{statsSize=Number(e.target.value);loadStats(1);});
+document.getElementById('prev-page').addEventListener('click',()=>loadStats(statsPage-1));
+document.getElementById('next-page').addEventListener('click',()=>loadStats(statsPage+1));
+(async()=>{try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
 load();setInterval(load,60000);setInterval(tick,1000);
 </script>
 </body></html>
