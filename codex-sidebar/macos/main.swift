@@ -18,6 +18,9 @@ func execute(_ executable: String, _ arguments: [String], timeout: TimeInterval 
     task.arguments = arguments
     var environment = ProcessInfo.processInfo.environment
     environment["CODEX_QUOTA_STATE_DIR"] = support.path
+    environment["NODE_USE_ENV_PROXY"] = "1"
+    environment["NO_PROXY"] = "localhost,127.0.0.1,::1," + (environment["NO_PROXY"] ?? environment["no_proxy"] ?? "")
+    environment["no_proxy"] = "localhost,127.0.0.1,::1," + (environment["no_proxy"] ?? "")
     task.environment = environment
     task.standardOutput = pipe
     task.standardError = pipe
@@ -35,9 +38,9 @@ func execute(_ executable: String, _ arguments: [String], timeout: TimeInterval 
 
 func nodeRuntime() -> String? {
     let candidates = [
+        "/opt/homebrew/bin/node", "/usr/local/bin/node",
         "/Applications/Codex.app/Contents/Resources/cua_node/bin/node",
-        "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node",
-        "/opt/homebrew/bin/node", "/usr/local/bin/node"
+        "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
     ]
     for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
         let result = execute(candidate, ["-e", "process.exit(typeof WebSocket === 'function' && Number(process.versions.node.split('.')[0]) >= 22 ? 0 : 1)"], timeout: 5)
@@ -55,6 +58,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusLabel: NSMenuItem!
     private var startItem: NSMenuItem!
     private var stopItem: NSMenuItem!
+    private var dlpItem: NSMenuItem!
     private var timer: Timer?
     private var busy = false
     private var quitting = false
@@ -83,6 +87,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(statusLabel)
         menu.addItem(.separator())
         startItem = add(menu, "启动客户端与额度", #selector(startQuota))
+        dlpItem = add(menu, "连接 DLP 客户端额度", #selector(connectDlp))
         stopItem = add(menu, "停止额度显示", #selector(stopQuota))
         menu.addItem(.separator())
         _ = add(menu, "查看状态…", #selector(showStatus))
@@ -127,6 +132,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         busy = value
         startItem.isEnabled = !value
         stopItem.isEnabled = !value
+        dlpItem.isEnabled = !value
         if value { statusLabel.title = "正在处理…" }
     }
 
@@ -162,11 +168,18 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.statusLabel.title = running ? (connected && pages > 0 ? "额度显示已开启" : "等待客户端连接") : "额度显示已停止"
             if show {
                 let connection = connected ? "已连接客户端" : "未连接客户端"
-                self.alert("额度助手状态", "\(self.statusLabel.title)\n\(connection)\n\n不开机自动启动 ChatGPT / Codex。\n使用菜单「启动客户端与额度」来开启。")
-            } else if recover && self.wanted && !running && connected {
-                // Recover only by attaching to an already-open CDP client.
+                let endpoints = status["endpoints"] as? [[String: Any]] ?? []
+                let details = endpoints.map { endpoint -> String in
+                    let port = endpoint["port"] as? Int ?? 0
+                    let name = port == 9342 ? "DLP 实例" : (port == 9341 ? "普通实例" : "实例 \(port)")
+                    let ready = endpoint["connected"] as? Bool ?? false
+                    return "\(name)：\(ready ? "已连接" : "等待连接")"
+                }.joined(separator: "\n")
+                self.alert("额度助手状态", "\(self.statusLabel.title)\n\(connection)\n\(details)\n\nDLP 实例请从原 DLP 安全终端启动 gpt-safe。首次适配后需退出旧实例再重开。")
+            } else if recover && self.wanted && !running {
+                // Recover the watcher without launching a client; DLP may open later.
                 // Never call the launch path from a timer or application startup.
-                self.perform(["start", "--attach-only"]) { outcome in
+                self.perform(["start", "--watch"]) { outcome in
                     if outcome.code == 0 { self.refreshStatus(recover: false) }
                 }
             }
@@ -177,6 +190,17 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         perform(["start"]) { result in
             if result.code == 0 { self.wanted = true }
             else { self.alert("无法启动额度", result.output) }
+            self.refreshStatus(recover: false)
+        }
+    }
+    @objc private func connectDlp() {
+        guard CommandLine.arguments.contains("--dlp-context") else {
+            alert("从 DLP 终端连接", "请在原 DLP 安全终端运行一次 gpt-safe 或 gpt-safe-detached。它会自动从安全上下文启动额度助手并连接当前 GPT，无需退出 GPT。")
+            return
+        }
+        perform(["start", "--watch"]) { result in
+            if result.code == 0 { self.wanted = true }
+            else { self.alert("无法连接额度", result.output) }
             self.refreshStatus(recover: false)
         }
     }
@@ -194,7 +218,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { alert("暂无日志", "开启额度显示后会生成日志。") }
     }
     @objc private func showHelp() {
-        alert(appName, "点击「启动客户端与额度」即可使用，无需打开终端。\n\n若客户端已正常打开但没有调试连接，请先用 ⌘Q 退出客户端，再从本菜单启动。\n\n额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
+        alert(appName, "普通实例点击「启动客户端与额度」。DLP 实例使用原安全终端中的 gpt-safe 启动，再点击「连接 DLP 客户端额度」；助手会自动等待并连接，两个实例均可显示。\n\n首次适配 DLP 后，旧实例需要退出，再从原 DLP 入口重开。仅重复运行启动器无法为旧进程开启连接。\n\n额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
     }
     @objc private func quit() {
         guard !busy else { return }
@@ -212,9 +236,10 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func uninstall() {
         guard !busy else { return }
-        let expected = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(appName).app")
-        guard Bundle.main.bundleURL.standardizedFileURL == expected.standardizedFileURL else {
-            alert("请从已安装的应用卸载", "为保护源码和构建目录，卸载仅适用于 ~/Applications/\(appName).app。")
+        let expected = Bundle.main.bundleURL.standardizedFileURL
+        let allowed = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(appName).app"), URL(fileURLWithPath: "/Applications/\(appName).app")]
+        guard Bundle.main.bundleIdentifier == bundleID && allowed.contains(where: { $0.standardizedFileURL == expected }) else {
+            alert("请从已安装的应用卸载", "为保护源码和构建目录，卸载仅适用于 Applications 中安装的 \(appName).app。")
             return
         }
         NSApp.activate(ignoringOtherApps: true)
