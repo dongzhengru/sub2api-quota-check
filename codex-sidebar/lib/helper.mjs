@@ -6,6 +6,16 @@ import path from 'node:path';
 const exec = promisify(execFile);
 
 export function proxyEnvironment(environment) {
+  // Proxy variables without an actual proxy only break undici: NODE_USE_ENV_PROXY
+  // swaps in EnvHttpProxyAgent, and even a bare NO_PROXY makes the first loopback
+  // CDP request fail with UND_ERR_SOCKET. Keep the env clean unless a real proxy
+  // is configured (e.g. the safe terminal); direct fetches need none of this.
+  const proxied = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']
+    .some(name => environment[name]);
+  if (!proxied) {
+    const { NODE_USE_ENV_PROXY, NO_PROXY, no_proxy, ...clean } = environment;
+    return clean;
+  }
   return { ...environment, NODE_USE_ENV_PROXY: '1',
     NO_PROXY: `localhost,127.0.0.1,::1,${environment.NO_PROXY || environment.no_proxy || ''}`,
     no_proxy: `localhost,127.0.0.1,::1,${environment.no_proxy || environment.NO_PROXY || ''}` };

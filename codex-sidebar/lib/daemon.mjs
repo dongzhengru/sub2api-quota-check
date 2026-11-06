@@ -59,17 +59,25 @@ export async function removeWidgets(port) {
   return removed;
 }
 
-export async function runDaemon({ port, selector, signal, log = console.log }) {
+export async function runDaemon({ ports, port, poller = new UsagePoller(), ...options }) {
+  // Both instances share the same quota request/cache, but reconnect independently.
+  await Promise.all((ports || [port]).map(port => runEndpoint({ ...options, port, poller,
+    log: message => (options.log || console.log)(`[${port}] ${message}`) })));
+}
+
+async function runEndpoint({ port, selector, signal, poller, log, dependencies = {} }) {
+  const verify = dependencies.verify || assertAppListener;
+  const targetsForPort = dependencies.targets || listTargets;
+  const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
-  const poller = new UsagePoller();
   const sessions = new Map();
   let previousError = '';
   let nextUsage = Promise.resolve();
   try {
     while (!signal.aborted) {
       try {
-        await assertAppListener(port);
-        const targets = (await listTargets(port)).filter(isAppTarget);
+        await verify(port);
+        const targets = (await targetsForPort(port)).filter(isAppTarget);
         if (!targets.length) throw new Error('CDP 已连接，等待 Codex 主界面');
         // Poll in parallel with UI maintenance, so slow requests don't delay mounting.
         nextUsage = poller.refresh();
@@ -82,7 +90,7 @@ export async function runDaemon({ port, selector, signal, log = console.log }) {
           let fresh = false;
           try {
             if (!client) {
-              client = await CDP.connect(target.webSocketDebuggerUrl, { port });
+              client = await connect(target.webSocketDebuggerUrl, port);
               sessions.set(target.id, client);
               fresh = true;
             }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
 import { assertAppListener } from '../lib/daemon.mjs';
+import { proxyEnvironment } from '../lib/helper.mjs';
 
 export function sample() {
   return {
@@ -156,4 +157,18 @@ test('daemon identity uses UTF-8 even under Finder C locale and preserves instan
     assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`})),true);
     assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');}),false);
   } finally {if(original===undefined)delete process.env.LC_ALL;else process.env.LC_ALL=original;}
+});
+
+test('daemon spawn env carries proxy vars only when a real proxy is configured', () => {
+  const bare = proxyEnvironment({ PATH: '/bin', NODE_USE_ENV_PROXY: '1', NO_PROXY: 'localhost,127.0.0.1,::1,' });
+  assert.equal(bare.PATH, '/bin');
+  assert.equal(bare.NODE_USE_ENV_PROXY, undefined);
+  assert.equal(bare.NO_PROXY, undefined);
+  assert.equal(bare.no_proxy, undefined);
+
+  const proxied = proxyEnvironment({ PATH: '/bin', HTTPS_PROXY: 'http://127.0.0.1:7890', NO_PROXY: 'localhost' });
+  assert.equal(proxied.NODE_USE_ENV_PROXY, '1');
+  assert.equal(proxied.HTTPS_PROXY, 'http://127.0.0.1:7890');
+  assert.match(proxied.NO_PROXY, /^localhost,127\.0\.0\.1,::1,/);
+  assert.match(proxied.no_proxy, /^localhost,127\.0\.0\.1,::1,/);
 });

@@ -5,13 +5,17 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { ensureDlpHelper, proxyEnvironment } from './lib/helper.mjs';
 import { assertAppListener, removeWidgets, runDaemon } from './lib/daemon.mjs';
-import { listTargets, isAppTarget } from './lib/cdp.mjs';
+import { parsePorts, endpointStatus } from './lib/endpoints.mjs';
 import { matchesDaemonProcess, processOptions } from './lib/process.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const STATE = process.env.CODEX_QUOTA_STATE_DIR ? path.resolve(process.env.CODEX_QUOTA_STATE_DIR) : path.join(ROOT, '.state');
+const bundled = path.basename(path.resolve(ROOT, '../../..')) === 'Codex 额度助手.app';
+const STATE = process.env.CODEX_QUOTA_STATE_DIR ? path.resolve(process.env.CODEX_QUOTA_STATE_DIR) :
+  bundled ? path.join(homedir(), 'Library/Application Support/CodexQuotaSidebar') : path.join(ROOT, '.state');
 const STATE_FILE = path.join(STATE, 'daemon.json');
 const LOG = path.join(STATE, 'sidebar.log');
 const CLI = fileURLToPath(import.meta.url);
@@ -21,8 +25,8 @@ function option(name, fallback) {
   const i = args.indexOf(`--${name}`);
   return i < 0 ? fallback : args[i + 1];
 }
-const port = Number(option('port', '9341'));
-if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('端口必须为 1024–65535');
+const ports = parsePorts(option('port'));
+const port = ports[0];
 
 async function readState() {
   try { return JSON.parse(await readFile(STATE_FILE, 'utf8')); }
@@ -43,11 +47,11 @@ async function appBundle() {
   throw new Error('未找到 Codex / ChatGPT.app；可用 --app 指定应用路径');
 }
 async function launch() {
-  try { await assertAppListener(port); return; } catch { /* Not already listening. */ }
+  if ((await endpointStatus(ports)).some(value => value.connected)) return;
   const app = await appBundle();
-  const { stdout } = await exec('/bin/ps', ['-ww', '-axo', 'comm='], processOptions());
-  if (stdout.split('\n').some(line => line.trim() === app.exe)) {
-    throw new Error('客户端正在运行但未开启调试连接。请先用 ⌘Q 完全退出客户端，再从额度助手菜单点击「启动客户端与额度」。程序不会强制结束聊天。');
+  const { stdout } = await exec('/bin/ps', ['-axww', '-o', 'command='], processOptions());
+  if (stdout.split('\n').some(line => line.trim().startsWith(app.exe))) {
+    throw new Error('客户端正在运行但未开启调试连接。普通实例请先用 ⌘Q 退出再从助手启动；DLP 实例请从原 DLP 安全终端重新运行 gpt-safe，并点击「连接 DLP 客户端额度」。程序不会强制结束聊天。');
   }
   await exec('/usr/bin/open', ['-na', app.bundle, '--args', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`]);
   for (let i = 0; i < 30; i++) {
@@ -69,25 +73,30 @@ async function start() {
   try {
     const state = await readState();
     if (await matchesProcess(state)) { console.log(`额度侧栏已运行（PID ${state.pid}，端口 ${state.port}）`); return; }
-    if (args.includes('--attach-only')) await assertAppListener(port);
-    else await launch();
+    if (args.includes('--attach-only')) {
+      if (!(await endpointStatus(ports)).some(value => value.connected)) throw new Error('未发现可连接的客户端');
+    } else if (!args.includes('--watch')) await launch();
     const log = await open(LOG, 'a', 0o600);
     const instance = randomUUID();
-    const childArgs = [CLI, 'run', '--port', String(port), '--instance', instance];
+    const childArgs = [CLI, 'run', '--port', ports.join(','), '--instance', instance];
     if (option('selector')) childArgs.push('--selector', option('selector'));
-    const child = spawn(process.execPath, childArgs, { detached: true, stdio: ['ignore', log.fd, log.fd], cwd: ROOT });
+    const child = spawn(process.execPath, childArgs, { detached: true, stdio: ['ignore', log.fd, log.fd], cwd: ROOT, env: proxyEnvironment(process.env) });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
-    await writeFile(STATE_FILE, JSON.stringify({ pid: child.pid, port, instance, startedAt: new Date().toISOString() }), { mode: 0o600 });
+    await writeFile(STATE_FILE, JSON.stringify({ pid: child.pid, port, ports, instance, startedAt: new Date().toISOString() }), { mode: 0o600 });
     child.unref();
     await log.close();
     console.log(`额度侧栏已启动。日志：${LOG}`);
   } finally { await lock.close(); await unlink(lockPath); }
 }
+async function cleanWidgets(state) {
+  const results = await Promise.allSettled((state?.ports || (state?.port ? [state.port] : ports)).map(removeWidgets));
+  if (results.some(result => result.status === 'fulfilled')) console.log('已清理页面卡片。');
+}
 async function stop() {
   const state = await readState();
   if (!await matchesProcess(state)) {
     console.log('额度侧栏后台未运行。');
-    try { await removeWidgets(state?.port || port); console.log('已清理页面卡片。'); } catch { /* App may be closed. */ }
+    await cleanWidgets(state);
     if (state) await clearState(state.pid);
     return;
   }
@@ -105,6 +114,19 @@ async function stop() {
 
 async function main() {
   switch (command) {
+    case 'dlp-helper': {
+      if (!bundled) throw new Error('请通过已安装额度助手的 DLP 启动器调用此命令');
+      await mkdir(STATE, { recursive: true, mode: 0o700 });
+      let lock;
+      const lockPath = path.join(STATE, 'helper-start.lock');
+      try { lock = await open(lockPath, 'wx', 0o600); }
+      catch (error) { if (error.code === 'EEXIST') return; throw error; }
+      try {
+        const result = await ensureDlpHelper({ bundle: path.resolve(ROOT, '../../..'), log: LOG, stopDaemon: stop });
+        console.log(result.reused ? 'DLP 额度助手已在运行' : '已从 DLP 上下文启动额度助手');
+      } finally { await lock.close(); await unlink(lockPath); }
+      break;
+    }
     case 'start': await start(); break;
     case 'launch': await launch(); console.log('客户端 CDP 已就绪'); break;
     case 'run': {
@@ -112,8 +134,8 @@ async function main() {
       process.once('SIGTERM', () => controller.abort());
       process.once('SIGINT', () => controller.abort());
       const log = message => console.log(`${new Date().toISOString()} ${message}`);
-      log(`额度侧栏后台已启动，CDP 127.0.0.1:${port}`);
-      try { await runDaemon({ port, selector: option('selector'), signal: controller.signal, log }); }
+      log(`额度侧栏后台已启动，CDP 127.0.0.1 端口 ${ports.join(', ')}`);
+      try { await runDaemon({ ports, selector: option('selector'), signal: controller.signal, log }); }
       finally { await clearState(process.pid); }
       // fetch() may still have an outstanding network timeout when quitting.
       process.exit(0);
@@ -123,18 +145,13 @@ async function main() {
     case 'status': case 'doctor': {
       const state = await readState();
       const running = await matchesProcess(state);
-      const activePort = state?.port || port;
-      let connected = false;
-      let pages = 0;
-      let error = null;
-      try {
-        await assertAppListener(activePort);
-        const targets = (await listTargets(activePort)).filter(isAppTarget);
-        connected = true;
-        pages = targets.length;
-      } catch (failure) { error = failure.message; }
+      const endpoints = await endpointStatus(state?.ports || (state?.port ? [state.port] : ports));
+      const connected = endpoints.some(value => value.connected);
+      const pages = endpoints.reduce((total, value) => total + value.pages, 0);
+      const activePort = endpoints.find(value => value.connected)?.port || port;
+      const error = connected ? null : endpoints.map(value => `${value.port}: ${value.error}`).join('；');
       if (args.includes('--json')) {
-        console.log(JSON.stringify({ running, connected, pages, port: activePort, pid: running ? state.pid : null, log: LOG, error }));
+        console.log(JSON.stringify({ running, connected, pages, endpoints, port: activePort, pid: running ? state.pid : null, log: LOG, error }));
       } else {
         console.log(running ? `后台运行中（PID ${state.pid}）` : '后台未运行');
         console.log(connected ? `CDP 本机端口 ${activePort} 正常；可连接的应用页面：${pages}` : `CDP 未就绪：${error}`);
@@ -142,7 +159,7 @@ async function main() {
       }
       break;
     }
-    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch [--port 9341] [--app /Applications/ChatGPT.app] [--selector CSS选择器] [--attach-only] [--json]');
+    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch [--port 9341,9342] [--app /Applications/ChatGPT.app] [--selector CSS选择器] [--attach-only|--watch] [--json]');
   }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

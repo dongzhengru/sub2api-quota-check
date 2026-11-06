@@ -2,8 +2,18 @@
 set -euo pipefail
 quota_source="$(cd "$(dirname "$0")" && pwd -P)"
 quota_repo="$(cd "$quota_source/../.." && pwd -P)"
-quota_bundle="$quota_source/build/Codex 额度助手.app"
-quota_dest="$HOME/Applications/Codex 额度助手.app"
+quota_build="${CODEX_QUOTA_BUILD_DIR:-$HOME/.codex/share/codexNoProject/codex-quota-build}"
+quota_bundle="$quota_build/Codex 额度助手.app"
+quota_dest="${CODEX_QUOTA_INSTALL_DIR:-$HOME/Applications/Codex 额度助手.app}"
+# Install over the existing copy when present, so the menu bar never runs two bundles.
+if [ -z "${CODEX_QUOTA_INSTALL_DIR:-}" ]; then
+  for candidate in "/Applications/Codex 额度助手.app" "$quota_dest"; do
+    if [ -d "$candidate" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$candidate/Contents/Info.plist" 2>/dev/null)" = "top.zhengru.codex-quota" ]; then
+      quota_dest="$candidate"
+      break
+    fi
+  done
+fi
 if [ ! -x "$quota_bundle/Contents/MacOS/CodexQuota" ]; then
   "$quota_source/build.sh"
 fi
