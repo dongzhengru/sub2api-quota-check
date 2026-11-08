@@ -1,0 +1,4 @@
+# Keep macOS shell entry points executable after Windows checkouts/transfers.
+*.sh text eol=lf
+*.command text eol=lf
+*.cmd text eol=crlf

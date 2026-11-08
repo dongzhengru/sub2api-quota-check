@@ -1,12 +1,18 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "请在 macOS 上运行额度助手安装器。" >&2
+  exit 1
+fi
 quota_source="$(cd "$(dirname "$0")" && pwd -P)"
 quota_repo="$(cd "$quota_source/../.." && pwd -P)"
-quota_bundle="$quota_source/build/Codex 额度助手.app"
-quota_dest="$HOME/Applications/Codex 额度助手.app"
-if [ ! -x "$quota_bundle/Contents/MacOS/CodexQuota" ]; then
-  "$quota_source/build.sh"
-fi
+quota_build="${CODEX_QUOTA_BUILD_DIR:-$HOME/.codex/share/codexNoProject/codex-quota-build}"
+quota_bundle="$quota_build/Codex 额度助手.app"
+quota_install_dir="${CODEX_QUOTA_INSTALL_DIR:-$HOME/Applications}"
+quota_dest="$quota_install_dir/Codex 额度助手.app"
+# The app owns a copy of the widget. Rebuild before stopping the installed
+# helper so updates cannot silently reinstall an old, non-collapsible card.
+"$quota_source/build.sh"
 source "$quota_repo/codex-sidebar/runtime.sh"
 if [ -e "$quota_dest" ]; then
   quota_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$quota_dest/Contents/Info.plist")
@@ -44,7 +50,7 @@ fi
 if [ -f "$quota_repo/codex-sidebar/.state/daemon.json" ]; then
   "$quota_node" "$quota_repo/codex-sidebar/cli.mjs" stop
 fi
-mkdir -p "$HOME/Applications"
+mkdir -p "$quota_install_dir"
 /usr/bin/ditto "$quota_bundle" "$quota_dest"
 /usr/bin/open "$quota_dest" --args --attach-existing
 echo "已安装：$quota_dest"

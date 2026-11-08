@@ -218,7 +218,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { alert("暂无日志", "开启额度显示后会生成日志。") }
     }
     @objc private func showHelp() {
-        alert(appName, "普通实例点击「启动客户端与额度」。DLP 实例使用原安全终端中的 gpt-safe 启动，再点击「连接 DLP 客户端额度」；助手会自动等待并连接，两个实例均可显示。\n\n首次适配 DLP 后，旧实例需要退出，再从原 DLP 入口重开。仅重复运行启动器无法为旧进程开启连接。\n\n额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
+        alert(appName, "普通实例点击「启动客户端与额度」。DLP 实例使用原安全终端中的 gpt-safe 启动，再点击「连接 DLP 客户端额度」；助手会自动等待并连接，两个实例均可显示。\n\n首次适配 DLP 后，旧实例需要退出，再从原 DLP 入口重开。仅重复运行启动器无法为旧进程开启连接。\n\n点击卡片的「网关额度」标题或箭头可收起、展开；会记住本机折叠状态，收起后仍持续更新。额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
     }
     @objc private func quit() {
         guard !busy else { return }
