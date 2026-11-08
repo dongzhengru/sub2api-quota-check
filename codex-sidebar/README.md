@@ -1,4 +1,4 @@
-# Codex 额度侧栏（macOS / 本机 CDP）
+# Codex 额度侧栏（Windows / macOS / 本机 CDP）
 
 在 Codex / 新版 ChatGPT 客户端的左侧栏底部显示 5 小时、7 天剩余额度、进度条、准确重置日期时间和倒计时。自动查询间隔为 120 秒，右上角刷新图标可立即发起查询。标题右侧的“查看用量”文字按钮可打开用户排行弹窗，默认隐藏，点击时才查询。弹窗支持 1／3／7 天、自定义日期和每页 20／50／100 条分页，按总 Token 排序，Token 显示 K／M，费用以 $ 显示并保留三位小数，悬停可看完整数值。关闭按钮、Esc 或点击遮罩可收起。
 
@@ -11,6 +11,30 @@
 无需聊天触发、无需 Skill、无需 npm install，也不需要运行本仓库的 Python 后端。不修改客户端安装包、账户、API 配置或 `.env`。接口展示的是网关后台配置的查询账号额度。
 
 ## 启动
+
+### Windows
+
+需要 Node.js 22+，无需 npm install、Python 或管理员权限。支持 Microsoft Store 版 Codex / ChatGPT，以及常见的用户目录、Program Files 安装路径。
+
+1. 首次使用先从客户端菜单或托盘完全退出 Codex / ChatGPT；关闭窗口可能只是隐藏窗口。
+2. 双击项目根目录的 **启动额度侧栏.cmd**。启动器会以 `127.0.0.1:9341` 调试参数启动客户端，并开启隐藏的额度后台。
+3. 使用 **查看额度状态.cmd** 检查连接，**停止额度侧栏.cmd** 移除卡片并停止后台。客户端保持运行。
+
+也可在 PowerShell 中运行：
+
+```powershell
+node .\codex-sidebar\cli.mjs start
+node .\codex-sidebar\cli.mjs status --json
+node .\codex-sidebar\cli.mjs stop
+# 非默认安装路径可指定已安装客户端的可执行文件
+node .\codex-sidebar\cli.mjs start --app 'C:\Program Files\Codex\Codex.exe'
+# 提前开启后台，等待带调试端口的客户端启动
+node .\codex-sidebar\cli.mjs start --watch
+```
+
+启动入口仅为当前脚本使用 `ExecutionPolicy Bypass`，不修改系统策略。后台通过 Windows CIM 核验真实可执行文件和监听地址；停止使用本地退出请求，让后台先清理卡片再退出。状态与日志位于 `codex-sidebar/.state/`，不会提交到 Git。未添加开机启动项。
+
+客户端退出后，后台会等待下次连接。下次请继续使用 **启动额度侧栏.cmd** 或指向它的快捷方式打开客户端；普通应用图标启动时不带调试端口。停止侧栏不会关闭客户端的调试端口；完全退出后用普通图标打开即可关闭端口。Windows 版本提供脚本入口，macOS 原生菜单栏助手仅适用于 macOS。
 
 ### 推荐：原生菜单栏助手
 
@@ -102,7 +126,7 @@ CDP 进程识别使用操作系统映射的可执行文件路径，兼容客户�
 
 ## 验证范围
 
-- 18 项 Node 自动化测试（含双实例独立连接、同名页面隔离、共享查询、退出清理与 DLP 启动器适配）：数据校验、请求合并、120 秒节流、手动刷新、失败标记、真实可执行文件识别、监听套接字继承、目标过滤、CDP 超时与断线处理。
+- 18 项 Node 自动化测试：数据校验、请求合并、120 秒节流、手动刷新、失败标记、macOS / Windows 可执行文件识别、监听套接字继承、目标过滤、CDP 超时与断线处理，以及 Windows 中文路径状态目录下的真实后台启停。Windows 启停实测在其他系统上跳过。
 - 独立 Chromium 实测：真实 CDP 连接、注入、重复调用、紧凑布局、准确日期时间、刷新按钮、侧栏重绘、折叠、错误状态、明暗色截图及完整移除。
 - 固定生产接口已经通过实际 Node 查询验证。
 - 已在实际客户端挂载新版卡片；首次查询、手动刷新和刷新后的持续连接均已验证。刷新图标采用单次 450 毫秒旋转，颜色跟随明暗色主题。
@@ -112,7 +136,7 @@ node --test codex-sidebar/test/*.test.mjs
 node codex-sidebar/test/browser.mjs
 ```
 
-浏览器测试默认使用 macOS Google Chrome 的独立临时用户目录，不读取已有浏览器资料；可用 `QUOTA_TEST_CHROME` 指定可执行文件。`~/.codex/share/codexNoProject/codex-quota-tests/` 中的 `preview.png` 和 `preview-dark.png` 是独立测试页面的渲染图，不是客户端实机截图。
+浏览器测试自动发现 Windows Chrome / Edge 或 macOS Chrome，使用独立临时用户目录，不读取已有浏览器资料；可用 `QUOTA_TEST_CHROME` 指定可执行文件。截图位于 `.state/browser-tests/`，是独立测试页面的渲染图，不是客户端实机截图。
 
 ### 卡片闪烁或按钮时有时无
 

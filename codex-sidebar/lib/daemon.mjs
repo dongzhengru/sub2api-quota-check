@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CDP, isAppTarget, listTargets } from './cdp.mjs';
 import { UsagePoller, fetchUserBreakdown } from './usage.mjs';
+import { assertWindowsListener } from './windows.mjs';
 
 const exec = promisify(execFile);
 export const DISPOSE = 'window.__zhengruQuotaSidebarV1?.dispose(); true';
@@ -13,7 +14,8 @@ export function isAppExecutable(value) {
   return /\/(?:Codex|ChatGPT)\.app\/Contents\/(?:MacOS\/(?:Codex|ChatGPT)|Frameworks\/.*\/MacOS\/(?:Codex|ChatGPT)(?: Helper)?(?: \([^)]+\))?)$/.test(value.trim());
 }
 
-export async function assertAppListener(port, run = exec) {
+export async function assertAppListener(port, run = exec, platform = process.platform) {
+  if (platform === 'win32') return assertWindowsListener(port, run);
   const { stdout } = await run('/usr/sbin/lsof', ['-nP', '-a', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpn'], { timeout: 3000 });
   const pids = [...stdout.matchAll(/^p(\d+)$/gm)].map(m => m[1]);
   const addresses = [...stdout.matchAll(/^n(.+)$/gm)].map(m => m[1]);

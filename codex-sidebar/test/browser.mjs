@@ -1,14 +1,22 @@
 // Real Chromium render test in a separate, disposable profile. No user tabs.
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, access, mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CDP, listTargets } from '../lib/cdp.mjs';
 
-const executable = process.env.QUOTA_TEST_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const candidates = process.env.QUOTA_TEST_CHROME ? [process.env.QUOTA_TEST_CHROME] : process.platform === 'win32' ? [
+  path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google/Chrome/Application/chrome.exe'),
+  path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe'),
+] : ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'];
+let executable;
+for (const candidate of candidates) { try { await access(candidate); executable = candidate; break; } catch {} }
+assert.ok(executable, 'Install Chrome/Edge or set QUOTA_TEST_CHROME to its executable');
+const artifacts = new URL('../.state/browser-tests/', import.meta.url);
+await mkdir(artifacts, { recursive: true });
 const profile = await mkdtemp(path.join(tmpdir(), 'codex-quota-browser-'));
-const chrome = spawn(executable, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn(executable, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
 let cdp;
 try {
   let port;
@@ -62,7 +70,7 @@ try {
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({...usageResult,id:query.id,data:{...usageResult.data,...query}})})`);
   await cdp.call('Page.enable');
   const usageShot=await cdp.call('Page.captureScreenshot',{format:'png'});
-  await writeFile(new URL('../preview-usage.png',import.meta.url),Buffer.from(usageShot.data,'base64'));
+  await writeFile(new URL('preview-usage.png',artifacts),Buffer.from(usageShot.data,'base64'));
   await cdp.evaluate(`${ui}.querySelector('.usage-close').click()`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`),false);
   const box = await cdp.evaluate(`JSON.stringify(document.querySelector('#zhengru-quota-sidebar').getBoundingClientRect().toJSON())`);
@@ -98,10 +106,10 @@ try {
   await cdp.call('Page.enable');
   await new Promise(r => setTimeout(r, 200));
   const screenshot = await cdp.call('Page.captureScreenshot', { format: 'png' });
-  await writeFile(new URL('../preview.png', import.meta.url), Buffer.from(screenshot.data, 'base64'));
+  await writeFile(new URL('preview.png', artifacts), Buffer.from(screenshot.data, 'base64'));
   await cdp.evaluate(`document.body.style.background = '#202020'; document.body.style.color = '#eee'; document.getElementById('app-shell-sidebar').style.background = '#171717'`);
   const dark = await cdp.call('Page.captureScreenshot', { format: 'png' });
-  await writeFile(new URL('../preview-dark.png', import.meta.url), Buffer.from(dark.data, 'base64'));
+  await writeFile(new URL('preview-dark.png', artifacts), Buffer.from(dark.data, 'base64'));
   // Even if the daemon dies before the first response, the initial spinner
   // must turn into an actionable error, rather than spin forever.
   await inject({ data: null, error: null, receivedAt: null, loading: true });
@@ -117,8 +125,11 @@ try {
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
   console.log('Browser checks passed: compact layout, exact date/time, manual refresh, first-response watchdog, React replacement, collapse, stale data, light/dark render, cleanup.');
 } finally {
+  try { await cdp?.call('Browser.close'); } catch { /* Browser may already be closed. */ }
   cdp?.close();
-  chrome.kill('SIGTERM');
-  await new Promise(resolve => { chrome.once('exit', resolve); setTimeout(resolve, 3000); });
+  if (chrome.exitCode === null) await new Promise(resolve => {
+    const timer = setTimeout(() => { chrome.kill('SIGTERM'); resolve(); }, 3000);
+    chrome.once('exit', () => { clearTimeout(timer); resolve(); });
+  });
   await rm(profile, { recursive: true, force: true, maxRetries: 3 });
 }

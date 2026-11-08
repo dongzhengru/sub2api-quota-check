@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { assertAppListener, removeWidgets, runDaemon } from './lib/daemon.mjs';
 import { listTargets, isAppTarget } from './lib/cdp.mjs';
 import { matchesDaemonProcess, processOptions } from './lib/process.mjs';
+import { findWindowsApp, windowsAppRunning } from './lib/windows.mjs';
+import { proxyEnvironment } from './lib/helper.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +35,7 @@ async function clearState(pid) {
   if ((await readState())?.pid === pid) await unlink(STATE_FILE).catch(() => {});
 }
 async function appBundle() {
+  if (process.platform === 'win32') return findWindowsApp({ explicit: option('app') });
   for (const candidate of [option('app', ''), '/Applications/Codex.app', '/Applications/ChatGPT.app']) {
     if (!candidate) continue;
     const full = path.resolve(candidate);
@@ -45,11 +48,21 @@ async function appBundle() {
 async function launch() {
   try { await assertAppListener(port); return; } catch { /* Not already listening. */ }
   const app = await appBundle();
-  const { stdout } = await exec('/bin/ps', ['-ww', '-axo', 'comm='], processOptions());
-  if (stdout.split('\n').some(line => line.trim() === app.exe)) {
-    throw new Error('客户端正在运行但未开启调试连接。请先用 ⌘Q 完全退出客户端，再从额度助手菜单点击「启动客户端与额度」。程序不会强制结束聊天。');
+  if (process.platform === 'win32') {
+    if (await windowsAppRunning(app.exe)) {
+      throw new Error('客户端正在运行但未开启调试连接。请从托盘或客户端菜单完全退出 Codex，再双击「启动额度侧栏.cmd」；关闭窗口可能仅隐藏到托盘。');
+    }
+    const child = spawn(app.exe, ['--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`],
+      { detached: true, stdio: 'ignore', windowsHide: false });
+    await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    child.unref();
+  } else {
+    const { stdout } = await exec('/bin/ps', ['-ww', '-axo', 'comm='], processOptions());
+    if (stdout.split('\n').some(line => line.trim() === app.exe)) {
+      throw new Error('客户端正在运行但未开启调试连接。请先用 ⌘Q 完全退出客户端，再从额度助手菜单点击「启动客户端与额度」。程序不会强制结束聊天。');
+    }
+    await exec('/usr/bin/open', ['-na', app.bundle, '--args', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`]);
   }
-  await exec('/usr/bin/open', ['-na', app.bundle, '--args', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`]);
   for (let i = 0; i < 30; i++) {
     await new Promise(resolve => setTimeout(resolve, 500));
     try { await assertAppListener(port); return; } catch { /* Wait for startup. */ }
@@ -68,14 +81,20 @@ async function start() {
   }
   try {
     const state = await readState();
-    if (await matchesProcess(state)) { console.log(`额度侧栏已运行（PID ${state.pid}，端口 ${state.port}）`); return; }
+    if (await matchesProcess(state)) {
+      if (state.port !== port) throw new Error('后台正在使用其他端口，请先 stop 再启动');
+      if (args.includes('--attach-only')) await assertAppListener(port);
+      else if (!args.includes('--watch')) await launch();
+      console.log(`额度侧栏已运行（PID ${state.pid}，端口 ${state.port}）`);
+      return;
+    }
     if (args.includes('--attach-only')) await assertAppListener(port);
-    else await launch();
+    else if (!args.includes('--watch')) await launch();
     const log = await open(LOG, 'a', 0o600);
     const instance = randomUUID();
     const childArgs = [CLI, 'run', '--port', String(port), '--instance', instance];
     if (option('selector')) childArgs.push('--selector', option('selector'));
-    const child = spawn(process.execPath, childArgs, { detached: true, stdio: ['ignore', log.fd, log.fd], cwd: ROOT });
+    const child = spawn(process.execPath, childArgs, { detached: true, windowsHide: true, env: proxyEnvironment(process.env), stdio: ['ignore', log.fd, log.fd], cwd: ROOT });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     await writeFile(STATE_FILE, JSON.stringify({ pid: child.pid, port, instance, startedAt: new Date().toISOString() }), { mode: 0o600 });
     child.unref();
@@ -91,11 +110,19 @@ async function stop() {
     if (state) await clearState(state.pid);
     return;
   }
-  process.kill(state.pid, 'SIGTERM');
-  for (let i = 0; i < 40; i++) {
+  // Windows SIGTERM forcibly kills Node and skips widget disposal. A local
+  // request file lets the daemon abort and clean up in its own event loop.
+  const stopFile = path.join(STATE, `stop-${state.instance}`);
+  if (process.platform === 'win32') await writeFile(stopFile, 'stop');
+  else process.kill(state.pid, 'SIGTERM');
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 250));
     if (!await matchesProcess(state)) {
       await clearState(state.pid);
+      await unlink(stopFile).catch(() => {});
+      // Recheck through CDP as a fallback if the client was reconnecting.
+      try { await removeWidgets(state.port); } catch { /* Client may be closed. */ }
       console.log('额度侧栏已停止，注入卡片已移除。');
       return;
     }
@@ -109,12 +136,21 @@ async function main() {
     case 'launch': await launch(); console.log('客户端 CDP 已就绪'); break;
     case 'run': {
       const controller = new AbortController();
+      const instance = option('instance');
+      const stopFile = instance ? path.join(STATE, `stop-${instance}`) : null;
+      const stopTimer = stopFile ? setInterval(() => {
+        void access(stopFile).then(() => controller.abort()).catch(() => {});
+      }, 250) : null;
       process.once('SIGTERM', () => controller.abort());
       process.once('SIGINT', () => controller.abort());
       const log = message => console.log(`${new Date().toISOString()} ${message}`);
       log(`额度侧栏后台已启动，CDP 127.0.0.1:${port}`);
       try { await runDaemon({ port, selector: option('selector'), signal: controller.signal, log }); }
-      finally { await clearState(process.pid); }
+      finally {
+        if (stopTimer) clearInterval(stopTimer);
+        if (stopFile) await unlink(stopFile).catch(() => {});
+        await clearState(process.pid);
+      }
       // fetch() may still have an outstanding network timeout when quitting.
       process.exit(0);
       break;
@@ -142,7 +178,7 @@ async function main() {
       }
       break;
     }
-    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch [--port 9341] [--app /Applications/ChatGPT.app] [--selector CSS选择器] [--attach-only] [--json]');
+    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch [--port 9341] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--json]');
   }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

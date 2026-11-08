@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
-import { assertAppListener } from '../lib/daemon.mjs';
+import { assertAppListener as assertPlatformAppListener } from '../lib/daemon.mjs';
+
+// These fixtures describe macOS lsof/ps output even when run on Windows.
+const assertAppListener = (port, run) => assertPlatformAppListener(port, run, 'darwin');
 
 export function sample() {
   return {
@@ -151,9 +154,9 @@ test('daemon identity uses UTF-8 even under Finder C locale and preserves instan
       assert.equal(options.env.LANG,'en_US.UTF-8');
       return {stdout:`node ${cli} run --port 9341 --instance abc-123\n`};
     };
-    assert.equal(await matchesDaemonProcess(state,cli,run),true);
-    assert.equal(await matchesDaemonProcess({...state,instance:'abc'},cli,run),false);
-    assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`})),true);
-    assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');}),false);
+    assert.equal(await matchesDaemonProcess(state,cli,run,'darwin'),true);
+    assert.equal(await matchesDaemonProcess({...state,instance:'abc'},cli,run,'darwin'),false);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`}),'darwin'),true);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');},'darwin'),false);
   } finally {if(original===undefined)delete process.env.LC_ALL;else process.env.LC_ALL=original;}
 });
