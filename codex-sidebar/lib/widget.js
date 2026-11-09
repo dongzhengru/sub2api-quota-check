@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 4) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 5) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -14,6 +14,10 @@ function installQuotaWidget(snapshot, options = {}) {
   let refreshRequested = false;
   let waitingForRefresh = false;
   let lastContact = Date.now();
+  const COLLAPSED_KEY = 'zhengruQuotaSidebar.collapsed';
+  let collapsed = false;
+  // Some renderer contexts deny storage; toggling still works for this session.
+  try { collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch {}
   let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
   const host = document.createElement('div');
   host.id = HOST;
@@ -28,6 +32,11 @@ function installQuotaWidget(snapshot, options = {}) {
       dialog{color:inherit;background:Canvas;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:14px;padding:24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog::backdrop{background:#0006}.dialog-head,.usage-filters,.usage-pages{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.dialog-head{justify-content:space-between}.dialog-head h2{font-size:16px;margin:0}.usage-filters{margin:18px 0}.usage-pages{justify-content:flex-end;margin-top:16px}dialog button,dialog input,dialog select{font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:6px;padding:6px 9px}dialog button{cursor:pointer}dialog button:disabled{opacity:.4;cursor:default}dialog button.active{background:#16845f;color:#fff}.usage-scroll{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:11px 9px;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent);text-align:right}th:first-child,td:first-child{text-align:left}th{font-weight:500;opacity:.65}.usage-status{opacity:.65;margin:10px 0}.usage-error{color:#df8842}
       .head,.label{display:flex;justify-content:space-between;align-items:center;gap:8px}
       .title{font-weight:600;font-size:11px;letter-spacing:.02em}
+      .toggle{display:flex;align-items:center;gap:4px;flex:1;min-width:0;border:0;border-radius:4px;padding:3px;margin:-3px;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;white-space:nowrap}
+      .toggle:hover{background:color-mix(in srgb,currentColor 6%,transparent)}.toggle:focus-visible{outline:2px solid #16a77a;outline-offset:1px}
+      .chevron{flex:none;opacity:.55}.toggle[aria-expanded="false"] .chevron{transform:rotate(-90deg)}
+      .stale .toggle .title::after{content:'●';font-size:7px;color:#df8842;margin-left:4px}
+      #quota-details[hidden]{display:none}
       .refresh{display:grid;place-items:center;width:20px;height:20px;padding:3px;border:0;border-radius:5px;background:transparent;color:inherit;opacity:.55;cursor:pointer}
       .refresh:hover{opacity:1;background:color-mix(in srgb,currentColor 8%,transparent)}
       .refresh:focus-visible{outline:2px solid #16a77a;outline-offset:1px}
@@ -41,16 +50,31 @@ function installQuotaWidget(snapshot, options = {}) {
       @media(prefers-reduced-motion:reduce){.fill{transition:none}.refresh svg{animation:none!important}}
     </style>
     <section class="card" aria-label="Zhengru 网关额度">
-      <div class="head"><span class="title">网关额度</span><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
+      <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="title">网关额度</span></button><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
+      <div id="quota-details">
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
+      </div>
     </section>
     <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行">关闭</button></div>
     <form class="usage-filters"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></form>
     <p class="usage-status" role="status" aria-live="polite"></p><p class="usage-error" role="alert" hidden></p>
     <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
     <div class="usage-pages"><label>每页 <select><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
+  const toggle = root.querySelector('.toggle');
+  function paintCollapse() {
+    root.getElementById('quota-details').hidden = collapsed;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? '展开额度详情' : '收起额度详情');
+  }
+  toggle.addEventListener('click', () => {
+    collapsed = !collapsed;
+    try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch {}
+    paintCollapse();
+    paint();
+  });
+  paintCollapse();
   const formatPercent = n => `${Number(n.toFixed(1))}%`;
   const formatDate = value => new Date(value).toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai', hour12: false,
@@ -75,6 +99,7 @@ function installQuotaWidget(snapshot, options = {}) {
     const disconnected = Date.now() - lastContact > 45_000;
     const stale = !!current?.error || disconnected || (current?.receivedAt != null && Date.now() - current.receivedAt > 270_000);
     root.querySelector('.card').classList.toggle('stale', stale);
+    toggle.title = stale ? '更新失败，展开查看详情' : '点击' + (collapsed ? '展开' : '收起') + '额度详情';
     const button = root.querySelector('.refresh');
     const loading = !disconnected && (waitingForRefresh || !!current?.loading);
     button.disabled = loading;
@@ -194,7 +219,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 4,
+    version: 5,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},

@@ -1,11 +1,16 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "请在 macOS 上运行额度助手安装器。" >&2
+  exit 1
+fi
 quota_source="$(cd "$(dirname "$0")" && pwd -P)"
 quota_repo="$(cd "$quota_source/../.." && pwd -P)"
 quota_build="${CODEX_QUOTA_BUILD_DIR:-$HOME/.codex/share/codexNoProject/codex-quota-build}"
 quota_bundle="$quota_build/Codex 额度助手.app"
-quota_dest="${CODEX_QUOTA_INSTALL_DIR:-$HOME/Applications/Codex 额度助手.app}"
-# Install over the existing copy when present, so the menu bar never runs two bundles.
+quota_install_dir="${CODEX_QUOTA_INSTALL_DIR:-$HOME/Applications}"
+quota_dest="$quota_install_dir/Codex 额度助手.app"
+# Update the existing bundle so the menu bar never runs two helpers.
 if [ -z "${CODEX_QUOTA_INSTALL_DIR:-}" ]; then
   for candidate in "/Applications/Codex 额度助手.app" "$quota_dest"; do
     if [ -d "$candidate" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$candidate/Contents/Info.plist" 2>/dev/null)" = "top.zhengru.codex-quota" ]; then
@@ -14,9 +19,9 @@ if [ -z "${CODEX_QUOTA_INSTALL_DIR:-}" ]; then
     fi
   done
 fi
-if [ ! -x "$quota_bundle/Contents/MacOS/CodexQuota" ]; then
-  "$quota_source/build.sh"
-fi
+quota_install_dir="$(dirname "$quota_dest")"
+# Rebuild before stopping the installed helper to avoid reinstalling stale code.
+"$quota_source/build.sh"
 source "$quota_repo/codex-sidebar/runtime.sh"
 if [ -e "$quota_dest" ]; then
   quota_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$quota_dest/Contents/Info.plist")
@@ -54,8 +59,12 @@ fi
 if [ -f "$quota_repo/codex-sidebar/.state/daemon.json" ]; then
   "$quota_node" "$quota_repo/codex-sidebar/cli.mjs" stop
 fi
-mkdir -p "$HOME/Applications"
+mkdir -p "$quota_install_dir"
 /usr/bin/ditto "$quota_bundle" "$quota_dest"
-/usr/bin/open "$quota_dest" --args --attach-existing
+if [ "${CODEX_QUOTA_DLP:-0}" = "1" ]; then
+  "$quota_node" "$quota_dest/Contents/Resources/engine/cli.mjs" dlp-helper
+else
+  /usr/bin/open "$quota_dest" --args --attach-existing
+fi
 echo "已安装：$quota_dest"
 echo "菜单栏中可启动或停止额度；未添加开机登录项。"
