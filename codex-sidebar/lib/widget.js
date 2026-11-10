@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 6) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 7) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -203,8 +203,13 @@ function installQuotaWidget(snapshot, options = {}) {
   root.querySelector('.usage-prev').addEventListener('click',()=>queryUsage(usagePage-1));
   root.querySelector('.usage-next').addEventListener('click',()=>queryUsage(usagePage+1));
   function findSidebar() {
-    // Verified in the installed unified ChatGPT/Codex client, then older Codex.
+    // Codex 26.1103 splits the navigation root into a rail and a content column.
+    // A full-width card belongs inside the column; rail-only mode has no space.
+    const shell = document.getElementById('app-shell-sidebar');
+    if (!options.selector && shell?.querySelector('[data-app-navigation-rail]') &&
+        !shell.querySelector('[data-slate-sidebar-content]')) return null;
     const selectors = options.selector ? [options.selector] : [
+      '#app-shell-sidebar [data-slate-sidebar-content]',
       '#app-shell-sidebar [data-sidebar-navigation-root]',
       '#app-shell-sidebar .sidebar-navigation', '#app-shell-sidebar',
       '[data-sidebar-navigation-root]', 'aside[data-testid="sidebar"]',
@@ -221,7 +226,8 @@ function installQuotaWidget(snapshot, options = {}) {
     const target = findSidebar();
     if (!target) { host.remove(); sidebar = null; return; }
     sidebar = target;
-    const collapsed = target.closest('[data-sidebar-collapsed="true"], [inert]');
+    // New clients emit data-sidebar-collapsed=""; older ones use "true".
+    const collapsed = target.closest('[data-sidebar-collapsed]:not([data-sidebar-collapsed="false"]), [inert], [hidden], [aria-hidden="true"]');
     host.hidden = !!collapsed;
     host.style.display = collapsed ? 'none' : 'block';
     if (host.parentNode !== target) target.appendChild(host);
@@ -232,7 +238,7 @@ function installQuotaWidget(snapshot, options = {}) {
     queueMicrotask(() => { scheduled = false; mount(); });
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
-    attributeFilter: ['data-sidebar-collapsed', 'inert'] });
+    attributeFilter: ['data-sidebar-collapsed', 'inert', 'hidden', 'aria-hidden'] });
   const timer = setInterval(() => { mount(); paint(); }, 5000);
   root.querySelector('.refresh').addEventListener('click', () => {
     refreshRequested = true;
@@ -246,7 +252,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 6,
+    version: 7,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},

@@ -62,7 +62,11 @@ try {
     fetched_at: new Date(now).toISOString(),
   }, receivedAt: now, error: null, loading: false };
   const inject = data => cdp.evaluate(`(${widget})(${JSON.stringify(data)})`);
+  // The local Codex compatibility widget and upstream reset-card widget both
+  // used version 6. A merged widget must replace an already-running old copy.
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1 = {version:6,update(){},status(){return {mounted:false}},dispose(){window.__oldQuotaDisposed=true;delete window.__zhengruQuotaSidebarV1;}}`);
   assert.equal((await inject(snapshot)).mounted, true);
+  assert.equal(await cdp.evaluate(`window.__oldQuotaDisposed`), true, 'Updating replaces the older widget so reset cards can render');
   assert.equal((await inject(snapshot)).mounted, true);
   assert.equal(await cdp.evaluate(`document.querySelectorAll('#zhengru-quota-sidebar').length`), 1);
   assert.equal(await cdp.evaluate(`document.querySelector('#zhengru-quota-sidebar').shadowRoot.querySelector('b').textContent`), '70%');
@@ -191,6 +195,34 @@ try {
   await cdp.evaluate(`document.getElementById('app-shell-sidebar').remove()`);
   assert.equal((await inject(snapshot)).mounted, false);
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
+  // Codex 26.1103: the navigation root contains a rail and a separate content
+  // column. The collapsed marker is an empty attribute, rather than "true".
+  await cdp.evaluate(`document.body.innerHTML = '<style>body{margin:0}#app-shell-sidebar{width:320px;height:760px;display:flex;flex-direction:column}[data-sidebar-navigation-root]{display:flex;flex:1;min-height:0}[data-app-navigation-rail]{width:56px;flex:none}[data-slate-sidebar-content]{display:flex;flex:1;min-width:0;flex-direction:column;overflow:hidden}.chats{flex:1;min-height:0;overflow:auto}</style><div id="app-shell-sidebar"><div data-sidebar-navigation-root><nav data-app-navigation-rail>导航</nav><div data-slate-sidebar-content class="sidebar-navigation"><div class="chats">聊天列表</div><footer>设置</footer></div></div></div><main>聊天内容</main>'`);
+  await inject(snapshot);
+  assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').parentElement.hasAttribute('data-slate-sidebar-content')`), true, 'Quota belongs in the content column beside the navigation rail');
+  const splitBox = await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').getBoundingClientRect().toJSON()`);
+  assert.ok(splitBox.left >= 56 && splitBox.right <= 320 && splitBox.bottom <= 760, 'Quota stays within the content column');
+  const splitShot = await cdp.call('Page.captureScreenshot', { format: 'png' });
+  await writeFile(new URL('preview-split-sidebar.png', artifacts), Buffer.from(splitShot.data, 'base64'));
+  await cdp.evaluate(`document.querySelector('[data-slate-sidebar-content]').setAttribute('data-sidebar-collapsed', '')`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').hidden`), true, 'Empty collapsed marker hides the quota');
+  await cdp.evaluate(`document.querySelector('[data-slate-sidebar-content]').setAttribute('data-sidebar-collapsed', 'false')`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').hidden`), false, 'Explicit false marker keeps the quota visible');
+  await cdp.evaluate(`document.querySelector('[data-slate-sidebar-content]').setAttribute('aria-hidden', 'true')`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').hidden`), true, 'Hidden content also hides the quota');
+  await cdp.evaluate(`document.querySelector('[data-slate-sidebar-content]').removeAttribute('aria-hidden')`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').hidden`), false, 'Quota reappears with the content');
+  await cdp.evaluate(`document.querySelector('[data-slate-sidebar-content]').remove()`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.status().mounted`), false, 'Rail-only mode does not mount a full quota card into the rail');
+  await cdp.evaluate(`document.querySelector('[data-sidebar-navigation-root]').insertAdjacentHTML('beforeend', '<div data-slate-sidebar-content class="sidebar-navigation"><div class="chats">重建的聊天列表</div></div>')`);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.status().mounted`), true, 'Restoring the content column remounts quota');
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
   dashboardUsage={...snapshot.data,timezone:'Asia/Shanghai'};
   await cdp.call('Page.navigate',{url:pageUrl+'dashboard'});
   let dashboardReady=false;
@@ -216,7 +248,7 @@ try {
   await cdp.evaluate(`load()`);
   assert.equal(await cdp.evaluate(`document.getElementById('credits-error').textContent`),'重置卡查询失败');
   assert.equal(await cdp.evaluate(`document.querySelector('#five_hour .number').textContent`),'70');
-  console.log('Browser checks passed: collapse/expand, persistence, keyboard toggle, updates while collapsed, compact layout, manual refresh, usage dialog, first-response watchdog, React replacement, sidebar collapse, stale data, light/dark render, cleanup.');
+  console.log('Browser checks passed: quota controls, reset card expiry and errors, split sidebar layout, rail-only mode, dashboard desktop/mobile, cleanup.');
 } finally {
   try { await cdp?.call('Browser.close'); } catch { /* Browser may already be closed. */ }
   cdp?.close();
