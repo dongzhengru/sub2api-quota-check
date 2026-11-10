@@ -13,8 +13,24 @@ export function validateUsage(data) {
   // Only transfer fields the widget actually needs into the renderer.
   return {
     five_hour: pickWindow(data.five_hour), seven_day: pickWindow(data.seven_day),
+    reset_credits: validateResetCredits(data.reset_credits),
     fetched_at: Number.isFinite(Date.parse(data.cache?.fetched_at)) ? data.cache.fetched_at : null,
   };
+}
+
+export function validateResetCredits(info) {
+  if (info == null) return null; // Older servers still provide quota windows.
+  const invalid = () => ({ available_count: null, credits: [], error: '重置卡响应数据无效' });
+  if (typeof info !== 'object' || Array.isArray(info)) return invalid();
+  if (typeof info.error === 'string' && info.error) return { available_count: null, credits: [], error: info.error };
+  if (!Number.isInteger(info.available_count) || info.available_count < 0 || !Array.isArray(info.credits)) return invalid();
+  const credits = [];
+  for (const credit of info.credits) {
+    if (!credit || typeof credit !== 'object' || !Number.isInteger(credit.resets_left) || credit.resets_left <= 0 ||
+        (credit.expires_at != null && (typeof credit.expires_at !== 'string' || !Number.isFinite(Date.parse(credit.expires_at))))) return invalid();
+    credits.push({ label: typeof credit.label === 'string' ? credit.label : '重置卡', resets_left: credit.resets_left, expires_at: credit.expires_at ?? null });
+  }
+  return { available_count: info.available_count, credits, error: null };
 }
 
 function pickWindow(w) {

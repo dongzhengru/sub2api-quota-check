@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, rm, access, mkdir } from 'node:fs/promise
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { CDP, listTargets } from '../lib/cdp.mjs';
 import { createServer } from 'node:http';
 
@@ -14,11 +15,18 @@ const candidates = process.env.QUOTA_TEST_CHROME ? [process.env.QUOTA_TEST_CHROM
 let executable;
 for (const candidate of candidates) { try { await access(candidate); executable = candidate; break; } catch {} }
 assert.ok(executable, 'Install Chrome/Edge or set QUOTA_TEST_CHROME to its executable');
-const artifacts = new URL('../.state/browser-tests/', import.meta.url);
+const artifacts = process.env.QUOTA_TEST_ARTIFACT_DIR ? pathToFileURL(path.resolve(process.env.QUOTA_TEST_ARTIFACT_DIR)+path.sep) : new URL('../.state/browser-tests/', import.meta.url);
 await mkdir(artifacts, { recursive: true });
 const profile = await mkdtemp(path.join(tmpdir(), 'codex-quota-browser-'));
 // Give the isolated page an origin so collapse persistence uses real storage.
-const server = createServer((_, response) => { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end('<!doctype html><html><body></body></html>'); });
+let dashboardUsage;
+const dashboardHtml = await readFile(new URL('../../static/index.html', import.meta.url),'utf8');
+const server = createServer((request, response) => {
+  if(request.url.startsWith('/api/')) {
+    response.setHeader('Content-Type','application/json');
+    response.end(JSON.stringify(request.url.startsWith('/api/usage') ? dashboardUsage : request.url.startsWith('/api/config') ? {timezone:'Asia/Shanghai'} : {start_date:'2026-11-10',end_date:'2026-11-10',timezone:'Asia/Shanghai',users:[],page:1,page_size:20,has_more:false}));
+  } else { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(request.url==='/dashboard' ? dashboardHtml : '<!doctype html><html><body></body></html>'); }
+});
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
 const chrome = spawn(executable, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, pageUrl], { stdio: 'ignore', windowsHide: true });
@@ -46,6 +54,11 @@ try {
   const snapshot = { data: {
     five_hour: { used_percent: 30, remaining_percent: 70, resets_at: new Date(now + 7200_000).toISOString() },
     seven_day: { used_percent: 32, remaining_percent: 68, resets_at: new Date(now + 3 * 86400_000).toISOString() },
+    reset_credits: {available_count:1,error:null,credits:[
+      {label:'<img src=x onerror=alert(1)>',resets_left:2,expires_at:new Date(now+12*3600000).toISOString()},
+      {label:'expired',resets_left:1,expires_at:new Date(now-3600000).toISOString()},
+      {label:'unknown',resets_left:1,expires_at:null},
+    ]},
     fetched_at: new Date(now).toISOString(),
   }, receivedAt: now, error: null, loading: false };
   const inject = data => cdp.evaluate(`(${widget})(${JSON.stringify(data)})`);
@@ -53,6 +66,18 @@ try {
   assert.equal((await inject(snapshot)).mounted, true);
   assert.equal(await cdp.evaluate(`document.querySelectorAll('#zhengru-quota-sidebar').length`), 1);
   assert.equal(await cdp.evaluate(`document.querySelector('#zhengru-quota-sidebar').shadowRoot.querySelector('b').textContent`), '70%');
+  const creditUI = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
+  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits summary').textContent`), /重置卡 · 可用 1 次/);
+  await cdp.evaluate(`${creditUI}.querySelector('.credits').open=true`);
+  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /不足 1 天到期/);
+  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /已到期/);
+  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /上游未提供到期时间/);
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.credits-list img')`), null);
+  await inject({...snapshot,data:{...snapshot.data,reset_credits:{available_count:null,credits:[],error:'重置卡无权限'}}});
+  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /无权限/);
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('b').textContent`), '70%');
+  await inject(snapshot);
+  await cdp.evaluate(`${creditUI}.querySelector('.credits').open=false`);
   // Usage stays hidden and makes no request until explicitly opened.
   const ui = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.toggle')?.getAttribute('aria-expanded')`), 'true', 'Quota starts expanded');
@@ -114,7 +139,7 @@ try {
   const box = await cdp.evaluate(`JSON.stringify(document.querySelector('#zhengru-quota-sidebar').getBoundingClientRect().toJSON())`);
   const rect = JSON.parse(box);
   assert.ok(rect.width > 180 && rect.right <= 260 && rect.bottom <= 760, `Widget outside sidebar: ${box}`);
-  assert.ok(rect.height <= 130, `Compact card is too tall: ${rect.height}`);
+  assert.ok(rect.height <= 160, `Compact card is too tall: ${rect.height}`);
   assert.match(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('time').textContent`), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.getElementById('foot').hidden`), true);
   await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('.refresh').click()`);
@@ -166,6 +191,31 @@ try {
   await cdp.evaluate(`document.getElementById('app-shell-sidebar').remove()`);
   assert.equal((await inject(snapshot)).mounted, false);
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
+  dashboardUsage={...snapshot.data,timezone:'Asia/Shanghai'};
+  await cdp.call('Page.navigate',{url:pageUrl+'dashboard'});
+  let dashboardReady=false;
+  for(let i=0;i<60&&!dashboardReady;i++) {
+    dashboardReady=await cdp.evaluate(`document.getElementById('credit-list')?.children.length===3`);
+    if(!dashboardReady)await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.ok(dashboardReady,'Dashboard renders all reset cards');
+  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/不足 1 天到期/);
+  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/已到期/);
+  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/上游未提供到期时间/);
+  assert.equal(await cdp.evaluate(`document.querySelector('#credit-list img')`),null);
+  const dashboardShot=await cdp.call('Page.captureScreenshot',{format:'png'});
+  await writeFile(new URL('preview-dashboard.png',artifacts),Buffer.from(dashboardShot.data,'base64'));
+  await cdp.call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert.ok(await cdp.evaluate(`document.documentElement.scrollWidth<=innerWidth`),'Dashboard fits mobile viewport');
+  const mobileShot=await cdp.call('Page.captureScreenshot',{format:'png'});
+  await writeFile(new URL('preview-dashboard-mobile.png',artifacts),Buffer.from(mobileShot.data,'base64'));
+  dashboardUsage={...dashboardUsage,reset_credits:{available_count:0,credits:[],error:null}};
+  await cdp.evaluate(`load()`);
+  assert.equal(await cdp.evaluate(`document.getElementById('credits-summary').textContent`),'暂无剩余重置卡');
+  dashboardUsage={...dashboardUsage,reset_credits:{available_count:null,credits:[],error:'重置卡查询失败'}};
+  await cdp.evaluate(`load()`);
+  assert.equal(await cdp.evaluate(`document.getElementById('credits-error').textContent`),'重置卡查询失败');
+  assert.equal(await cdp.evaluate(`document.querySelector('#five_hour .number').textContent`),'70');
   console.log('Browser checks passed: collapse/expand, persistence, keyboard toggle, updates while collapsed, compact layout, manual refresh, usage dialog, first-response watchdog, React replacement, sidebar collapse, stale data, light/dark render, cleanup.');
 } finally {
   try { await cdp?.call('Browser.close'); } catch { /* Browser may already be closed. */ }

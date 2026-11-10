@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown } from '../lib/usage.mjs';
+import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, validateResetCredits } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
 import { assertAppListener as assertPlatformAppListener } from '../lib/daemon.mjs';
 import { proxyEnvironment } from '../lib/helper.mjs';
@@ -174,4 +174,20 @@ test('daemon spawn env carries proxy vars only when a real proxy is configured',
   assert.equal(proxied.HTTPS_PROXY, 'http://127.0.0.1:7890');
   assert.match(proxied.NO_PROXY, /^localhost,127\.0\.0\.1,::1,/);
   assert.match(proxied.no_proxy, /^localhost,127\.0\.0\.1,::1,/);
+});
+
+
+test('reset card parsing keeps only expiry fields and isolates optional failures', () => {
+  assert.equal(validateResetCredits(undefined), null);
+  const info = { available_count: 1, credits: [{label:'card',resets_left:2,expires_at:'2026-11-20T00:00:00Z',secret:'drop'}], secret:'drop' };
+  const cards = validateResetCredits(info);
+  assert.equal(cards.secret, undefined);
+  assert.equal(cards.credits[0].secret, undefined);
+  assert.equal(cards.credits[0].expires_at, '2026-11-20T00:00:00Z');
+  assert.equal(validateResetCredits({available_count:0,credits:[]}).error, null);
+  assert.equal(validateResetCredits({error:'无权限'}).error, '无权限');
+  for (const invalid of [true, {available_count:true,credits:[]}, {available_count:1,credits:[{resets_left:1,expires_at:'bad'}]}, {available_count:1,credits:[{resets_left:-1}]}]) {
+    assert.match(validateResetCredits(invalid).error, /无效/);
+    assert.equal(validateUsage({...sample(),reset_credits:invalid}).five_hour.remaining_percent, 70);
+  }
 });
