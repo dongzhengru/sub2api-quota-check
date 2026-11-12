@@ -1,8 +1,12 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "请在 macOS 上构建额度助手。" >&2
+  exit 1
+fi
 quota_source="$(cd "$(dirname "$0")" && pwd -P)"
 quota_engine="$(dirname "$quota_source")"
-quota_build="$quota_source/build"
+quota_build="${CODEX_QUOTA_BUILD_DIR:-$HOME/.codex/share/codexNoProject/codex-quota-build}"
 quota_app="$quota_build/Codex 额度助手.app"
 mkdir -p "$quota_build/module-cache"
 if [ -d "$quota_app" ]; then /bin/rm -rf "$quota_app"; fi

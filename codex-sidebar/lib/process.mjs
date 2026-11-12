@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { matchesWindowsDaemon } from './windows.mjs';
 
 const exec = promisify(execFile);
 
@@ -10,7 +11,8 @@ export const processOptions = () => ({
   env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' },
 });
 
-export async function matchesDaemonProcess(state, cli, run = exec) {
+export async function matchesDaemonProcess(state, cli, run = exec, platform = process.platform) {
+  if (platform === 'win32') return matchesWindowsDaemon(state, cli, run);
   if (!state || !Number.isInteger(state.pid) || state.pid <= 1 ||
       typeof state.instance !== 'string' || !state.instance) return false;
   try {

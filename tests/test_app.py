@@ -16,14 +16,6 @@ def payload():
     }}
 
 
-def refresh_payload():
-    return {'code': 0, 'data': {
-        'rate_limit_reset_credits': {'available_count': 2, 'credits': [
-            {'expires_at': '2026-11-30T19:16:43.963099Z'}]},
-        'credits': {'has_credits': True, 'unlimited': False, 'balance': '732.8715220000'},
-    }}
-
-
 def test_cache_concurrency_and_expiration():
     async def run():
         calls = []
@@ -33,8 +25,8 @@ def test_cache_concurrency_and_expiration():
             if request.url.path.endswith('/login'):
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test', 'expires_in': 86400}})
             assert request.headers['authorization'] == 'Bearer test'
-            if request.url.path.endswith('/quota/refresh'):
-                return httpx.Response(200, json=refresh_payload())
+            if request.url.path.endswith('/reset-credits'):
+                return httpx.Response(200, json={'code': 0, 'data': {'available_count': 0, 'credits': []}})
             assert request.url.params['timezone'] == 'Asia/Shanghai'
             return httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
@@ -59,8 +51,8 @@ def test_unauthorized_relogin_once():
             if request.url.path.endswith('/login'):
                 counts['login'] += 1
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test'}})
-            if request.url.path.endswith('/quota/refresh'):
-                return httpx.Response(200, json=refresh_payload())
+            if request.url.path.endswith('/reset-credits'):
+                return httpx.Response(200, json={'code': 0, 'data': {'available_count': 0, 'credits': []}})
             counts['usage'] += 1
             return httpx.Response(401) if counts['usage'] == 1 else httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
@@ -170,3 +162,88 @@ def test_user_breakdown_validation():
         assert client.get('/api/user-breakdown', params={
             'start_date': '2026-11-07', 'end_date': '2026-11-06'}).status_code == 400
         assert client.get('/api/config').json()['timezone'] == app.state.usage.tz
+
+
+
+def test_reset_cards_sorted_whitelisted_cached_and_reauthenticated():
+    async def run():
+        calls = []
+        async def handler(request):
+            calls.append((request.method, request.url.path))
+            if request.url.path.endswith('/login'):
+                return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'renewed'}})
+            if request.url.path.endswith('/usage'):
+                return httpx.Response(200, json=payload())
+            assert request.url.path == '/api/v1/admin/accounts/7/claude/reset-credits'
+            if request.headers['authorization'] == 'Bearer old':
+                return httpx.Response(401)
+            return httpx.Response(200, json={'code': 0, 'data': {
+                'available_count': 2, 'secret': 'drop', 'credits': [
+                    {'label': 'later', 'resets_left': 1, 'expires_at': '2026-12-01T00:00:00Z', 'secret': 'drop'},
+                    {'label': 'earlier', 'resets_left': 2, 'expires_at': '2026-11-20T08:00:00+08:00'},
+                    {'label': 'unknown', 'resets_left': 1},
+                    {'label': 'used', 'resets_left': 0},
+                ]}})
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test', account_id=7)
+            service.token, service.token_deadline = 'old', float('inf')
+            result = await service.get()
+            cards = result['reset_credits']
+            assert cards['available_count'] == 2 and cards['error'] is None
+            assert [c['label'] for c in cards['credits']] == ['earlier', 'later', 'unknown']
+            assert cards['credits'][2]['expires_at'] is None
+            assert all(set(c) == {'label', 'resets_left', 'expires_at'} for c in cards['credits'])
+            assert all(method == 'GET' or path.endswith('/login') for method, path in calls)
+            assert len(calls) == 4
+            cards['credits'].clear()
+            cached = await service.get()
+            assert cached['cache']['hit'] and len(cached['reset_credits']['credits']) == 3
+            assert len(calls) == 4
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('status,body,error', [
+    (404, {}, '暂不支持'), (403, {}, '权限'), (401, {}, '认证失败'),
+    (423, {'code': 'ADMIN_COMPLIANCE_ACK_REQUIRED'}, '合规确认'),
+    (200, {'code': 0, 'data': {'available_count': True, 'credits': []}}, '无效'),
+    (200, {'code': 0, 'data': {'available_count': 1, 'credits': [
+        {'resets_left': 1, 'expires_at': '2026-11-20T08:00:00'}]}}, '无效'),
+    (200, {'code': 0, 'data': {'available_count': 1, 'credits': [
+        {'resets_left': -1}]}}, '无效'),
+    (200, {'code': 0, 'data': {'available_count': 1, 'credits': [None]}}, '无效'),
+])
+def test_optional_reset_card_failure_does_not_break_usage(status, body, error):
+    async def run():
+        async def handler(request):
+            if request.url.path.endswith('/usage'):
+                return httpx.Response(200, json=payload())
+            if request.url.path.endswith('/login'):
+                return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'new'}})
+            return httpx.Response(status, json=body)
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            service.token, service.token_deadline = 'test', float('inf')
+            data = await service.get()
+            assert data['five_hour']['remaining_percent'] == 93
+            assert data['reset_credits']['available_count'] is None
+            assert error in data['reset_credits']['error']
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('timeout', [False, True])
+def test_reset_card_empty_and_network_failure(timeout):
+    async def run():
+        async def handler(request):
+            if request.url.path.endswith('/usage'):
+                return httpx.Response(200, json=payload())
+            if timeout:
+                raise httpx.ReadTimeout('timeout')
+            return httpx.Response(200, json={'code': 0, 'data': {'available_count': 0, 'credits': []}})
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            service.token, service.token_deadline = 'test', float('inf')
+            data = await service.get()
+            assert data['five_hour']['remaining_percent'] == 93
+            assert data['reset_credits']['credits'] == []
+            assert bool(data['reset_credits']['error']) == timeout
+    asyncio.run(run())

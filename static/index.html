@@ -25,10 +25,10 @@ main{width:100%;max-width:1000px;padding:40px 24px}
 .reset span{color:var(--muted);white-space:nowrap}
 .reset time{text-align:right;font-variant-numeric:tabular-nums}
 .countdown{font-size:11px;color:var(--muted);text-align:right;margin-top:9px;line-height:1.6}
-.account-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:24px}.summary-item{padding:20px 24px}.summary-value{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:12px}.summary-label{font-size:12px;color:var(--muted)}.summary-detail{font-size:12px;color:var(--muted);margin-top:6px}
 .error{color:#9a4a35;font-size:12px;line-height:1.7;margin:20px 0 0;overflow-wrap:anywhere}
 [hidden]{display:none!important}
 .breakdown{margin-top:24px;padding:28px}
+.credits{margin-top:24px;padding:24px 28px}.credit-list{display:grid;gap:14px;margin-top:18px}.credit-row{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:13px}.credit-row small{display:block;margin-top:5px;color:var(--muted);font-size:12px}.credit-row .expiry{text-align:right}.credit-warning{color:#9a4a35!important}
 .filters,.dates,.pagination{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filters{margin:22px 0 12px}.dates{margin-bottom:18px}
 button,input,select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:8px 12px}
@@ -45,7 +45,7 @@ button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#
 <section class="card" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="5 小时已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 <section class="card seven" id="seven_day"><div class="cardhead"><h2>7 天额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="7 天已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 </div>
-<div class="account-summary"><section class="card summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count">—</div><div class="summary-detail" id="reset-card-expiry">等待查询</div></section><section class="card summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></section></div>
+<section class="card credits" aria-labelledby="credits-title"><div class="cardhead"><h2 id="credits-title">重置卡到期时间</h2><span class="status" id="credits-summary">等待查询</span></div><div class="credit-list" id="credit-list" role="status" aria-live="polite"></div><p class="error" id="credits-error" role="alert" hidden></p></section>
 <section class="card breakdown" aria-labelledby="breakdown-title">
 <div class="cardhead"><h2 id="breakdown-title">用户 Token 用量</h2><span class="status" id="stats-zone"></span></div>
 <div class="filters" aria-label="快捷日期"><button type="button" data-days="1" class="active" aria-pressed="true">1 天</button><button type="button" data-days="3" aria-pressed="false">3 天</button><button type="button" data-days="7" aria-pressed="false">7 天</button></div>
@@ -59,8 +59,30 @@ button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#
 <script>
 let latest=null, busy=false;
 const fmt=n=>Number(n.toFixed(2)).toString();
+function renderCredits(data){
+ const summary=document.getElementById('credits-summary'),list=document.getElementById('credit-list'),error=document.getElementById('credits-error');
+ const info=data.reset_credits;list.replaceChildren();error.hidden=true;error.textContent='';
+ if(!info||info.error){summary.textContent='暂时无法查询';error.textContent=info?.error||'服务端尚未提供重置卡信息，请更新后端。';error.hidden=false;return;}
+ summary.textContent=`当前可用 ${info.available_count} 次`;
+ if(!info.credits.length){summary.textContent='暂无剩余重置卡';return;}
+ const dateFmt=new Intl.DateTimeFormat('zh-CN',{timeZone:data.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+ for(const credit of info.credits){
+  const row=document.createElement('div'),name=document.createElement('div'),remaining=document.createElement('small'),expiry=document.createElement('div');
+  row.className='credit-row';name.textContent=credit.label||'重置卡';remaining.textContent=`剩余 ${credit.resets_left} 次`;name.append(remaining);expiry.className='expiry';
+  if(credit.expires_at){
+   const time=document.createElement('time'),countdown=document.createElement('small');time.dateTime=credit.expires_at;time.textContent=dateFmt.format(new Date(credit.expires_at));time.title=data.timezone;
+   countdown.dataset.creditExpiry=credit.expires_at;expiry.append(time,countdown);
+  }else expiry.textContent='上游未提供到期时间';
+  row.append(name,expiry);list.append(row);
+ }
+}
 function tick(){
  if(!latest)return;
+ for(const el of document.querySelectorAll('[data-credit-expiry]')){
+  const ms=Date.parse(el.dataset.creditExpiry)-Date.now(),days=Math.ceil(ms/86400000);
+  el.textContent=ms<=0?'已到期':days<=1?'不足 1 天到期':`剩余 ${days} 天`;
+  el.classList.toggle('credit-warning',ms<=3*86400000);
+ }
  for(const key of ['five_hour','seven_day']){
   const seconds=Math.max(0,Math.ceil((Date.parse(latest[key].resets_at)-Date.now())/1000));
   const days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600),minutes=Math.floor(seconds%3600/60);
@@ -84,17 +106,11 @@ async function load(){
    card.querySelector('time').dateTime=w.resets_at;
   }
   latest=data;
-  document.getElementById('reset-card-count').textContent=Number.isFinite(data.reset_cards?.available_count)?data.reset_cards.available_count.toLocaleString('zh-CN'):'—';
-  const expiry=data.reset_cards?.expires_at?.[0];
-  const expiryLabel=document.getElementById('reset-card-expiry');
-  const expiryList=Array.isArray(data.reset_cards?.expires_at)?data.reset_cards.expires_at:[];
-  expiryLabel.textContent=expiry?`最近过期：${dateFmt.format(new Date(expiry))}`:'暂无过期时间';
-  expiryLabel.title=expiryList.length?`所有重置卡到期时间：\n${expiryList.map((value,index)=>`${index+1}. ${dateFmt.format(new Date(value))}`).join('\n')}`:'';
-  const balance=Number(data.credits?.balance);
-  document.getElementById('credit-balance').textContent=data.credits?.unlimited?'无限':Number.isFinite(balance)?balance.toLocaleString('en-US',{maximumFractionDigits:3}):'—';
+  renderCredits(data);
   document.querySelectorAll('.cards .error').forEach(el=>{el.hidden=true;el.textContent='';});
   tick();
  }catch(error){
+  const creditError=document.getElementById('credits-error');creditError.textContent=(latest?'更新失败，重置卡信息为上次查询数据。':'')+error.message;creditError.hidden=false;
   document.querySelectorAll('.cards .error').forEach(el=>{
    el.textContent=(latest?'更新失败，当前为上次查询数据。':'')+error.message;
    el.hidden=false;

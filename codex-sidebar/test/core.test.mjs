@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown } from '../lib/usage.mjs';
+import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, validateResetCredits } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
-import { assertAppListener } from '../lib/daemon.mjs';
+import { assertAppListener as assertPlatformAppListener } from '../lib/daemon.mjs';
+import { proxyEnvironment } from '../lib/helper.mjs';
+
+// These fixtures describe macOS lsof/ps output even when run on Windows.
+const assertAppListener = (port, run) => assertPlatformAppListener(port, run, 'darwin');
 
 export function sample() {
   return {
@@ -151,9 +155,39 @@ test('daemon identity uses UTF-8 even under Finder C locale and preserves instan
       assert.equal(options.env.LANG,'en_US.UTF-8');
       return {stdout:`node ${cli} run --port 9341 --instance abc-123\n`};
     };
-    assert.equal(await matchesDaemonProcess(state,cli,run),true);
-    assert.equal(await matchesDaemonProcess({...state,instance:'abc'},cli,run),false);
-    assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`})),true);
-    assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');}),false);
+    assert.equal(await matchesDaemonProcess(state,cli,run,'darwin'),true);
+    assert.equal(await matchesDaemonProcess({...state,instance:'abc'},cli,run,'darwin'),false);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>({stdout:`node ${cli} run --port 9341 --instance abc-123 --selector aside\n`}),'darwin'),true);
+    assert.equal(await matchesDaemonProcess(state,cli,async()=>{throw Error('missing');},'darwin'),false);
   } finally {if(original===undefined)delete process.env.LC_ALL;else process.env.LC_ALL=original;}
+});
+
+test('daemon spawn env carries proxy vars only when a real proxy is configured', () => {
+  const bare = proxyEnvironment({ PATH: '/bin', NODE_USE_ENV_PROXY: '1', NO_PROXY: 'localhost,127.0.0.1,::1,' });
+  assert.equal(bare.PATH, '/bin');
+  assert.equal(bare.NODE_USE_ENV_PROXY, undefined);
+  assert.equal(bare.NO_PROXY, undefined);
+  assert.equal(bare.no_proxy, undefined);
+
+  const proxied = proxyEnvironment({ PATH: '/bin', HTTPS_PROXY: 'http://127.0.0.1:7890', NO_PROXY: 'localhost' });
+  assert.equal(proxied.NODE_USE_ENV_PROXY, '1');
+  assert.equal(proxied.HTTPS_PROXY, 'http://127.0.0.1:7890');
+  assert.match(proxied.NO_PROXY, /^localhost,127\.0\.0\.1,::1,/);
+  assert.match(proxied.no_proxy, /^localhost,127\.0\.0\.1,::1,/);
+});
+
+
+test('reset card parsing keeps only expiry fields and isolates optional failures', () => {
+  assert.equal(validateResetCredits(undefined), null);
+  const info = { available_count: 1, credits: [{label:'card',resets_left:2,expires_at:'2026-11-20T00:00:00Z',secret:'drop'}], secret:'drop' };
+  const cards = validateResetCredits(info);
+  assert.equal(cards.secret, undefined);
+  assert.equal(cards.credits[0].secret, undefined);
+  assert.equal(cards.credits[0].expires_at, '2026-11-20T00:00:00Z');
+  assert.equal(validateResetCredits({available_count:0,credits:[]}).error, null);
+  assert.equal(validateResetCredits({error:'无权限'}).error, '无权限');
+  for (const invalid of [true, {available_count:true,credits:[]}, {available_count:1,credits:[{resets_left:1,expires_at:'bad'}]}, {available_count:1,credits:[{resets_left:-1}]}]) {
+    assert.match(validateResetCredits(invalid).error, /无效/);
+    assert.equal(validateUsage({...sample(),reset_credits:invalid}).five_hour.remaining_percent, 70);
+  }
 });

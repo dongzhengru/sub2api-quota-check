@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CDP, isAppTarget, listTargets } from './cdp.mjs';
 import { UsagePoller, fetchUserBreakdown } from './usage.mjs';
+import { assertWindowsListener } from './windows.mjs';
 
 const exec = promisify(execFile);
 export const DISPOSE = 'window.__zhengruQuotaSidebarV1?.dispose(); true';
@@ -13,7 +14,8 @@ export function isAppExecutable(value) {
   return /\/(?:Codex|ChatGPT)\.app\/Contents\/(?:MacOS\/(?:Codex|ChatGPT)|Frameworks\/.*\/MacOS\/(?:Codex|ChatGPT)(?: Helper)?(?: \([^)]+\))?)$/.test(value.trim());
 }
 
-export async function assertAppListener(port, run = exec) {
+export async function assertAppListener(port, run = exec, platform = process.platform) {
+  if (platform === 'win32') return assertWindowsListener(port, run);
   const { stdout } = await run('/usr/sbin/lsof', ['-nP', '-a', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpn'], { timeout: 3000 });
   const pids = [...stdout.matchAll(/^p(\d+)$/gm)].map(m => m[1]);
   const addresses = [...stdout.matchAll(/^n(.+)$/gm)].map(m => m[1]);
@@ -59,17 +61,25 @@ export async function removeWidgets(port) {
   return removed;
 }
 
-export async function runDaemon({ port, selector, signal, log = console.log }) {
+export async function runDaemon({ ports, port, poller = new UsagePoller(), ...options }) {
+  // Both instances share the same quota request/cache, but reconnect independently.
+  await Promise.all((ports || [port]).map(port => runEndpoint({ ...options, port, poller,
+    log: message => (options.log || console.log)(`[${port}] ${message}`) })));
+}
+
+async function runEndpoint({ port, selector, signal, poller, log, dependencies = {} }) {
+  const verify = dependencies.verify || assertAppListener;
+  const targetsForPort = dependencies.targets || listTargets;
+  const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
-  const poller = new UsagePoller();
   const sessions = new Map();
   let previousError = '';
   let nextUsage = Promise.resolve();
   try {
     while (!signal.aborted) {
       try {
-        await assertAppListener(port);
-        const targets = (await listTargets(port)).filter(isAppTarget);
+        await verify(port);
+        const targets = (await targetsForPort(port)).filter(isAppTarget);
         if (!targets.length) throw new Error('CDP 已连接，等待 Codex 主界面');
         // Poll in parallel with UI maintenance, so slow requests don't delay mounting.
         nextUsage = poller.refresh();
@@ -82,7 +92,7 @@ export async function runDaemon({ port, selector, signal, log = console.log }) {
           let fresh = false;
           try {
             if (!client) {
-              client = await CDP.connect(target.webSocketDebuggerUrl, { port });
+              client = await connect(target.webSocketDebuggerUrl, port);
               sessions.set(target.id, client);
               fresh = true;
             }

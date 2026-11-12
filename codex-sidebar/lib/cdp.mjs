@@ -1,4 +1,5 @@
 // Built-in WebSocket (Node >= 22); no dependency download or page-side network.
+import http from 'node:http';
 export class CDP {
   constructor(ws, timeout = 5000) {
     this.ws = ws;
@@ -74,12 +75,26 @@ export function isAppTarget(target) {
   } catch { return false; }
 }
 
-export async function listTargets(port) {
-  const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
-    signal: AbortSignal.timeout(2500), redirect: 'error',
+export function listTargets(port) {
+  // Loopback CDP probing deliberately avoids global fetch: one reset connection
+  // can leave undici's shared pool wedged for the rest of the process's life,
+  // while the DevTools endpoint only resets connections intermittently.
+  // A fresh, unpooled http request per call retries cleanly instead.
+  return new Promise((resolve, reject) => {
+    const request = http.get(`http://127.0.0.1:${port}/json/list`, { agent: false }, response => {
+      if (response.statusCode !== 200) { response.resume(); reject(new Error('无法读取 CDP 页面列表')); return; }
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => {
+        try {
+          const result = JSON.parse(body);
+          if (!Array.isArray(result)) throw new Error('CDP 页面列表无效');
+          resolve(result);
+        } catch (error) { reject(error); }
+      });
+    });
+    request.setTimeout(2500, () => request.destroy(new Error('CDP 列表请求超时')));
+    request.on('error', reject);
   });
-  if (!response.ok) throw new Error('无法读取 CDP 页面列表');
-  const result = await response.json();
-  if (!Array.isArray(result)) throw new Error('CDP 页面列表无效');
-  return result;
 }

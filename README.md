@@ -2,6 +2,12 @@
 
 Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天额度的已使用比例、剩余比例、下次重置时间和倒计时。
 
+## 重置卡到期时间
+
+额度区域展示当前 `SUB2API_ACCOUNT_ID` 的 Claude 重置卡，包含当前可用次数、每张卡剩余次数、到期时间和剩余天数，3 天内到期或已到期时显示提醒。多张卡按到期时间排序；未返回到期时间时明确标注。Codex 侧栏额度详情也显示摘要，可展开查看所有卡片（北京时间）。
+
+后端使用只读 `GET /api/v1/admin/accounts/{id}/claude/reset-credits`，不会兑换或消耗重置卡。`GET /api/usage` 新增 `reset_credits`，与额度共享 60 秒缓存；此查询失败会单独返回错误，不影响原有额度展示。需要上游版本支持此接口且查询账号有相应权限，目前接入的是 Claude 重置卡；账号有效期和充值码/订阅套餐期限属于其他信息。本地完成更新后还需更新服务端及侧栏程序。
+
 ## 用户 Token 用量
 
 额度页面下方展示按总 Token 降序排列的用户用量，包含请求数、输入、输出、缓存和总 Token，以及费用（`cost`，以 $ 显示）。Token 自动换算为 K、M，悬停显示完整数值；费用四舍五入后固定显示 3 位小数，悬停显示完整数值。支持 1 天（今天）、3 天、7 天快捷选择及自定义日期，包含首尾日期，按 `SUB2API_TIMEZONE` 计算。支持每页 20、50、100 条，切换查询范围或每页条数会回到第一页。
@@ -10,11 +16,25 @@ Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天
 
 ## Codex 常驻额度侧栏
 
-已加入无需聊天触发的 macOS CDP 侧栏组件及原生菜单栏助手。安装后的 **Codex 额度助手.app** 提供启动客户端、停止额度、查看状态和卸载入口；不会添加开机登录项，也不会自动打开 ChatGPT。它直接查询部署后的额度接口，无需启动本项目后端。源码运行仍可使用根目录 `.command` 文件。详见 [侧栏使用说明](codex-sidebar/README.md)。
+支持 Windows 和 macOS 的本机 CDP 侧栏，直接查询已部署的额度接口，无需启动本项目后端。Windows 双击根目录 **启动额度侧栏.cmd**，自动识别 Microsoft Store 版或常见安装位置的 Codex / ChatGPT；停止和检查分别使用 **停止额度侧栏.cmd**、**查看额度状态.cmd**。需要 Node.js 22+；首次启动前先完全退出客户端。macOS 仍可使用原生菜单栏助手或 `.command` 启动器。详见 [侧栏使用说明](codex-sidebar/README.md)。
 
 ## 运行
 
-需要 Python 3.9 或更新版本。
+需要 Python 3.9 或更新版本。仅使用 Codex 侧栏时可以跳过本节。
+
+### Windows（PowerShell）
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# 编辑 .env，填写真实登录账号和密码
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+无需激活虚拟环境或更改系统 PowerShell 执行策略；未安装 Python 时先安装 Python 3.9+。测试命令：`.\.venv\Scripts\python.exe -m pytest -q`。
+
+### macOS / Linux
 
 ```sh
 python3 -m venv .venv

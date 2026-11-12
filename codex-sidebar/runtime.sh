@@ -1,7 +1,10 @@
 #!/bin/bash
-# Resolve Node without requiring npm install; works when launched from Finder.
+# Resolve Node without requiring npm install; prefer the standard runtime.
+export NODE_USE_ENV_PROXY=1
+export NO_PROXY="localhost,127.0.0.1,::1${NO_PROXY:+,$NO_PROXY}"
+export no_proxy="localhost,127.0.0.1,::1${no_proxy:+,$no_proxy}"
 quota_node=""
-for candidate in "/Applications/Codex.app/Contents/Resources/cua_node/bin/node" "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node" /opt/homebrew/bin/node /usr/local/bin/node; do
+for candidate in /opt/homebrew/bin/node /usr/local/bin/node "/Applications/Codex.app/Contents/Resources/cua_node/bin/node" "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"; do
   if [ -x "$candidate" ] && "$candidate" -e 'process.exit(typeof WebSocket === "function" && Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' 2>/dev/null; then
     quota_node="$candidate"
     break
