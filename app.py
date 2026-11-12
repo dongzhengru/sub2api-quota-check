@@ -145,55 +145,52 @@ class UsageService:
                     'resets_at': reset,
                     'window_stats': window.get('window_stats'),
                 }
+            reset_credits, credits = await self.fetch_openai_quota()
             return {'updated_at': data.get('updated_at'), **windows,
-                    'reset_credits': await self.fetch_reset_credits()}
+                    'reset_credits': reset_credits, 'credits': credits}
 
-    async def fetch_reset_credits(self):
-        # This GET only inspects cards. Never call the redeem endpoint here.
+    async def fetch_openai_quota(self):
         try:
             for attempt in range(2):
-                response = await self.client.get(
-                    '/api/v1/admin/accounts/%s/claude/reset-credits' % self.account_id,
+                response = await self.client.post(
+                    '/api/v1/admin/openai/accounts/%s/quota/refresh' % self.account_id,
                     headers={'Authorization': 'Bearer ' + self.token}, timeout=10.0,
                 )
                 if response.status_code == 401 and attempt == 0:
                     await self.login()
                     continue
                 if response.status_code == 404:
-                    raise HTTPException(502, '上游暂不支持重置卡查询，请确认 Sub2API 版本。')
-                if response.status_code == 403:
-                    raise HTTPException(403, '当前查询账号没有查看重置卡的权限。')
-                data = self.unpack(response, stage='重置卡查询')
-                count, items = data.get('available_count'), data.get('credits')
+                    raise HTTPException(502, '上游暂不支持 OpenAI 点数查询，请确认 Sub2API 版本。')
+                data = self.unpack(response, stage='点数额度查询')
+                reset_info, credit_info = data.get('rate_limit_reset_credits') or {}, data.get('credits') or {}
+                count, items = reset_info.get('available_count'), reset_info.get('credits')
                 if type(count) is not int or count < 0 or not isinstance(items, list):
                     raise ValueError()
                 credits = []
                 for item in items:
                     if not isinstance(item, dict):
                         raise ValueError()
-                    remaining = item.get('resets_left')
-                    if type(remaining) is not int or remaining < 0:
-                        raise ValueError()
                     expires_at = item.get('expires_at')
                     if expires_at is not None:
                         parsed = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
                         if parsed.tzinfo is None:
                             raise ValueError()
-                    label = item.get('label')
-                    if remaining:
-                        credits.append({'label': label if isinstance(label, str) else '重置卡',
-                                        'resets_left': remaining, 'expires_at': expires_at})
+                    credits.append({'label': '重置卡', 'resets_left': 1, 'expires_at': expires_at})
                 credits.sort(key=lambda c: datetime.fromisoformat(c['expires_at'].replace('Z', '+00:00'))
                              if c['expires_at'] else datetime.max.replace(tzinfo=timezone.utc))
-                return {'available_count': count, 'credits': credits, 'error': None}
+                return ({'available_count': count, 'credits': credits, 'error': None},
+                        {'has_credits': bool(credit_info.get('has_credits')),
+                         'unlimited': bool(credit_info.get('unlimited')),
+                         'balance': credit_info.get('balance')})
         except HTTPException as exc:
             error = exc.detail
         except httpx.RequestError:
-            error = '重置卡查询暂时失败，请稍后刷新。'
+            error = '点数额度查询暂时失败，请稍后刷新。'
         except (ValueError, TypeError, AttributeError, OverflowError):
-            error = '上游返回的重置卡数据无效。'
+            error = '上游返回的点数额度数据无效。'
         # Usage remains usable even when this optional query is unavailable.
-        return {'available_count': None, 'credits': [], 'error': error}
+        return ({'available_count': None, 'credits': [], 'error': error},
+                {'has_credits': False, 'unlimited': False, 'balance': None})
 
     def snapshot(self, hit):
         return {**copy.deepcopy(self.cached), 'timezone': self.tz, 'cache': {

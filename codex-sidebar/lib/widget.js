@@ -46,6 +46,7 @@ function installQuotaWidget(snapshot, options = {}) {
       .track{margin-top:3px;height:3px;border-radius:4px;overflow:hidden;background:color-mix(in srgb,currentColor 9%,transparent)}
       .fill{height:100%;border-radius:4px;background:#16a77a;transition:width .35s ease}
       .reset{display:flex;justify-content:space-between;gap:4px;font-size:9px;opacity:.5;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+      .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent)}.summary-item{min-width:0}.summary-label{font-size:9px;opacity:.55}.summary-value{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail[title]{cursor:help}
       .credits{margin-top:6px;font-size:9px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent);padding-top:5px}.credits[hidden]{display:none}.credits summary{cursor:pointer;overflow-wrap:anywhere}.credits-list{margin-top:5px;display:grid;gap:6px}.credit-expiry{display:block;opacity:.65}.credit-warning{color:#df8842;opacity:1}
       .foot{margin-top:5px;font-size:10px;color:#df8842}.foot[hidden]{display:none}.stale .fill{opacity:.45}
       @media(prefers-reduced-motion:reduce){.fill{transition:none}.refresh svg{animation:none!important}}
@@ -55,7 +56,7 @@ function installQuotaWidget(snapshot, options = {}) {
       <div id="quota-details">
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
-      <details class="credits" hidden><summary></summary><div class="credits-list"></div></details>
+      <div class="summary"><div class="summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count">—</div><div class="summary-detail" id="reset-card-expiry">等待查询</div></div><div class="summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
       </div>
     </section>
@@ -122,31 +123,12 @@ function installQuotaWidget(snapshot, options = {}) {
       row.querySelector('.countdown').textContent = countdown(w.resets_at);
       row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置`;
     }
-    const creditDetails = root.querySelector('.credits'), info = current?.data?.reset_credits;
-    creditDetails.hidden = !current?.data;
-    const creditSummary = creditDetails.querySelector('summary'), creditList = creditDetails.querySelector('.credits-list');
-    creditList.replaceChildren();
-    if (!info || info.error) {
-      creditSummary.textContent = '重置卡 · 暂时无法查询';
-      creditSummary.title = info?.error || '服务端尚未提供重置卡信息，请更新后端。';
-      creditList.textContent = creditSummary.title;
-    } else {
-      creditSummary.title = '展开查看每张重置卡的到期时间（北京时间）';
-      const dated = info.credits.filter(c => c.expires_at).sort((a,b) => Date.parse(a.expires_at)-Date.parse(b.expires_at));
-      const nextExpiry = dated.find(c => Date.parse(c.expires_at)>Date.now()) || dated[0];
-      creditSummary.textContent = info.credits.length ? `重置卡 · 可用 ${info.available_count} 次` + (nextExpiry ? ` · ${exactDate(nextExpiry.expires_at).slice(5,16)} ${Date.parse(nextExpiry.expires_at)<=Date.now()?'已到期':'到期'}` : '') : '暂无剩余重置卡';
-      for (const credit of info.credits) {
-        const row = document.createElement('div'), expiry = document.createElement('span');
-        row.textContent = `${credit.label || '重置卡'} · 剩余 ${credit.resets_left} 次`;
-        expiry.className = 'credit-expiry';
-        if (credit.expires_at) {
-          const ms = Date.parse(credit.expires_at)-Date.now(), days = Math.ceil(ms/86400000);
-          expiry.textContent = exactDate(credit.expires_at) + (ms<=0 ? ' · 已到期' : days<=1 ? ' · 不足 1 天到期' : ` · 剩余 ${days} 天`);
-          expiry.classList.toggle('credit-warning',ms<=3*86400000);
-        } else expiry.textContent = '上游未提供到期时间';
-        row.append(expiry);creditList.append(row);
-      }
-    }
+    const info = current?.data?.reset_credits || {}, dates = (info.credits || []).map(c => c.expires_at).filter(Boolean).sort((a,b) => Date.parse(a)-Date.parse(b));
+    const count = root.getElementById('reset-card-count'), expiry = root.getElementById('reset-card-expiry'), balance = Number(current?.data?.credits?.balance);
+    count.textContent = Number.isFinite(info.available_count) ? String(info.available_count) : '—';
+    expiry.textContent = dates[0] ? `最近过期 ${exactDate(dates[0])}` : '暂无过期时间';
+    expiry.title = dates.length ? `所有重置卡到期时间：\n${dates.map((value,index) => `${index + 1}. ${exactDate(value)}`).join('\n')}` : '';
+    root.getElementById('credit-balance').textContent = current?.data?.credits?.unlimited ? '无限' : Number.isFinite(balance) ? balance.toFixed(3) : '—';
     const foot = root.getElementById('foot');
     foot.hidden = !stale;
     foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接') : '';

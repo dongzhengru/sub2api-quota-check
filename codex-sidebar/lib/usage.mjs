@@ -14,6 +14,8 @@ export function validateUsage(data) {
   return {
     five_hour: pickWindow(data.five_hour), seven_day: pickWindow(data.seven_day),
     reset_credits: validateResetCredits(data.reset_credits),
+    credits: { unlimited: data.credits?.unlimited === true,
+      balance: data.credits?.balance ?? null },
     fetched_at: Number.isFinite(Date.parse(data.cache?.fetched_at)) ? data.cache.fetched_at : null,
   };
 }
