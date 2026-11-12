@@ -46,7 +46,7 @@ function installQuotaWidget(snapshot, options = {}) {
       .track{margin-top:3px;height:3px;border-radius:4px;overflow:hidden;background:color-mix(in srgb,currentColor 9%,transparent)}
       .fill{height:100%;border-radius:4px;background:#16a77a;transition:width .35s ease}
       .reset{display:flex;justify-content:space-between;gap:4px;font-size:9px;opacity:.5;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
-      .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent)}.summary-item{min-width:0}.summary-label{font-size:9px;opacity:.55}.summary-value{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail[title]{cursor:help}
+      .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent)}.summary-item{min-width:0}.summary-label{font-size:9px;opacity:.7}.summary-value{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail.expiry{color:inherit;opacity:.9}.summary-detail[title]{cursor:help}
       .credits{margin-top:6px;font-size:9px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent);padding-top:5px}.credits[hidden]{display:none}.credits summary{cursor:pointer;overflow-wrap:anywhere}.credits-list{margin-top:5px;display:grid;gap:6px}.credit-expiry{display:block;opacity:.65}.credit-warning{color:#df8842;opacity:1}
       .foot{margin-top:5px;font-size:10px;color:#df8842}.foot[hidden]{display:none}.stale .fill{opacity:.45}
       @media(prefers-reduced-motion:reduce){.fill{transition:none}.refresh svg{animation:none!important}}
@@ -56,7 +56,7 @@ function installQuotaWidget(snapshot, options = {}) {
       <div id="quota-details">
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
-      <div class="summary"><div class="summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count">—</div><div class="summary-detail" id="reset-card-expiry">等待查询</div></div><div class="summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></div></div>
+      <div class="summary"><div class="summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count"></div><div class="summary-detail expiry" id="reset-card-expiry">等待查询</div></div><div class="summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
       </div>
     </section>
@@ -126,7 +126,8 @@ function installQuotaWidget(snapshot, options = {}) {
     const info = current?.data?.reset_credits || {}, dates = (info.credits || []).map(c => c.expires_at).filter(Boolean).sort((a,b) => Date.parse(a)-Date.parse(b));
     const count = root.getElementById('reset-card-count'), expiry = root.getElementById('reset-card-expiry'), balance = Number(current?.data?.credits?.balance);
     count.textContent = Number.isFinite(info.available_count) ? String(info.available_count) : '—';
-    expiry.textContent = dates[0] ? `最近过期 ${exactDate(dates[0])}` : '暂无过期时间';
+    const shortDate = value => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone:'Asia/Shanghai', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' }).formatToParts(new Date(value)).map(x => [x.type, x.value])); return `${p.month}/${p.day} ${p.hour}:${p.minute}:${p.second}`; };
+    expiry.textContent = dates[0] ? shortDate(dates[0]) : '暂无过期时间';
     expiry.title = dates.length ? `所有重置卡到期时间：\n${dates.map((value,index) => `${index + 1}. ${exactDate(value)}`).join('\n')}` : '';
     root.getElementById('credit-balance').textContent = current?.data?.credits?.unlimited ? '无限' : Number.isFinite(balance) ? balance.toFixed(3) : '—';
     const foot = root.getElementById('foot');
