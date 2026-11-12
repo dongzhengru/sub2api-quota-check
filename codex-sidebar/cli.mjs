@@ -10,7 +10,7 @@ import { ensureDlpHelper, proxyEnvironment } from './lib/helper.mjs';
 import { assertAppListener, removeWidgets, runDaemon } from './lib/daemon.mjs';
 import { parsePorts, endpointStatus } from './lib/endpoints.mjs';
 import { matchesDaemonProcess, processOptions } from './lib/process.mjs';
-import { findWindowsApp, windowsAppRunning } from './lib/windows.mjs';
+import { findWindowsApp, windowsAppRunning, restartWindowsApp } from './lib/windows.mjs';
 import { inspectUpdate, startUpdate, updateSource } from './lib/update.mjs';
 
 const exec = promisify(execFile);
@@ -54,7 +54,12 @@ async function launch() {
   const app = await appBundle();
   if (process.platform === 'win32') {
     if (await windowsAppRunning(app.exe)) {
-      throw new Error('客户端正在运行但未开启调试连接。请从托盘或客户端菜单完全退出 Codex，再双击「启动额度侧栏.cmd」；关闭窗口可能仅隐藏到托盘。');
+      if (!args.includes('--restart-client')) {
+        const error = new Error('客户端正在运行但未开启调试连接。请从托盘或客户端菜单完全退出 Codex，再双击「启动额度侧栏.cmd」；关闭窗口可能仅隐藏到托盘。');
+        error.exitCode = 2;
+        throw error;
+      }
+      await restartWindowsApp(app.exe);
     }
     const child = spawn(app.exe, ['--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`],
       { detached: true, stdio: 'ignore', windowsHide: false });
@@ -217,7 +222,7 @@ async function main() {
       }
       break;
     }
-    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch|check-update|update [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--json]');
+    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch|check-update|update [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--restart-client] [--json]');
   }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+main().catch(error => { console.error(error.message); process.exitCode = error.exitCode || 1; });

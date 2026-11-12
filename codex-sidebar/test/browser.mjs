@@ -20,9 +20,11 @@ await mkdir(artifacts, { recursive: true });
 const profile = await mkdtemp(path.join(tmpdir(), 'codex-quota-browser-'));
 // Give the isolated page an origin so collapse persistence uses real storage.
 let dashboardUsage;
+let dashboardStatus = 200;
 const dashboardHtml = await readFile(new URL('../../static/index.html', import.meta.url),'utf8');
 const server = createServer((request, response) => {
   if(request.url.startsWith('/api/')) {
+    if (request.url.startsWith('/api/usage')) response.statusCode = dashboardStatus;
     response.setHeader('Content-Type','application/json');
     response.end(JSON.stringify(request.url.startsWith('/api/usage') ? dashboardUsage : request.url.startsWith('/api/config') ? {timezone:'Asia/Shanghai'} : {start_date:'2026-11-10',end_date:'2026-11-10',timezone:'Asia/Shanghai',users:[],page:1,page_size:20,has_more:false}));
   } else { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(request.url==='/dashboard' ? dashboardHtml : '<!doctype html><html><body></body></html>'); }
@@ -52,6 +54,7 @@ try {
   await cdp.evaluate(`window.__quotaSetInterval = window.setInterval; window.setInterval = (fn, ms) => { window.__quotaTick = fn; return window.__quotaSetInterval(fn, ms); }`);
   const now = Date.now();
   const snapshot = { data: {
+    credits: { balance: 12.3456, unlimited: false },
     five_hour: { used_percent: 30, remaining_percent: 70, resets_at: new Date(now + 7200_000).toISOString() },
     seven_day: { used_percent: 32, remaining_percent: 68, resets_at: new Date(now + 3 * 86400_000).toISOString() },
     reset_credits: {available_count:1,error:null,credits:[
@@ -62,26 +65,28 @@ try {
     fetched_at: new Date(now).toISOString(),
   }, receivedAt: now, error: null, loading: false };
   const inject = data => cdp.evaluate(`(${widget})(${JSON.stringify(data)})`);
-  // The local Codex compatibility widget and upstream reset-card widget both
-  // used version 6. A merged widget must replace an already-running old copy.
-  await cdp.evaluate(`window.__zhengruQuotaSidebarV1 = {version:6,update(){},status(){return {mounted:false}},dispose(){window.__oldQuotaDisposed=true;delete window.__zhengruQuotaSidebarV1;}}`);
+  // The previous widget used version 7. Updating must replace the live copy
+  // so the new reset-card and credit summary actually appears after a reload.
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1 = {version:7,update(){},status(){return {mounted:false}},dispose(){window.__oldQuotaDisposed=true;delete window.__zhengruQuotaSidebarV1;}}`);
   assert.equal((await inject(snapshot)).mounted, true);
   assert.equal(await cdp.evaluate(`window.__oldQuotaDisposed`), true, 'Updating replaces the older widget so reset cards can render');
   assert.equal((await inject(snapshot)).mounted, true);
   assert.equal(await cdp.evaluate(`document.querySelectorAll('#zhengru-quota-sidebar').length`), 1);
   assert.equal(await cdp.evaluate(`document.querySelector('#zhengru-quota-sidebar').shadowRoot.querySelector('b').textContent`), '70%');
   const creditUI = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
-  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits summary').textContent`), /重置卡 · 可用 1 次/);
-  await cdp.evaluate(`${creditUI}.querySelector('.credits').open=true`);
-  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /不足 1 天到期/);
-  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /已到期/);
-  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /上游未提供到期时间/);
-  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.credits-list img')`), null);
+  assert.equal(await cdp.evaluate(`${creditUI}.getElementById('reset-card-count').textContent`), '1');
+  assert.match(await cdp.evaluate(`${creditUI}.getElementById('reset-card-expiry').textContent`), /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal((await cdp.evaluate(`${creditUI}.getElementById('reset-card-expiry').title`)).split('\n').length, 3);
+  assert.equal(await cdp.evaluate(`${creditUI}.getElementById('credit-balance').textContent`), '12.346');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.summary img')`), null);
+  await inject({...snapshot,data:{...snapshot.data,credits:{balance:null,unlimited:false}}});
+  assert.equal(await cdp.evaluate(`${creditUI}.getElementById('credit-balance').textContent`), '—');
+  await inject({...snapshot,data:{...snapshot.data,credits:{balance:null,unlimited:true}}});
+  assert.equal(await cdp.evaluate(`${creditUI}.getElementById('credit-balance').textContent`), '无限');
   await inject({...snapshot,data:{...snapshot.data,reset_credits:{available_count:null,credits:[],error:'重置卡无权限'}}});
-  assert.match(await cdp.evaluate(`${creditUI}.querySelector('.credits-list').textContent`), /无权限/);
+  assert.equal(await cdp.evaluate(`${creditUI}.getElementById('reset-card-count').textContent`), '—');
   assert.equal(await cdp.evaluate(`${creditUI}.querySelector('b').textContent`), '70%');
   await inject(snapshot);
-  await cdp.evaluate(`${creditUI}.querySelector('.credits').open=false`);
   // Usage stays hidden and makes no request until explicitly opened.
   const ui = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.toggle')?.getAttribute('aria-expanded')`), 'true', 'Quota starts expanded');
@@ -143,7 +148,7 @@ try {
   const box = await cdp.evaluate(`JSON.stringify(document.querySelector('#zhengru-quota-sidebar').getBoundingClientRect().toJSON())`);
   const rect = JSON.parse(box);
   assert.ok(rect.width > 180 && rect.right <= 260 && rect.bottom <= 760, `Widget outside sidebar: ${box}`);
-  assert.ok(rect.height <= 160, `Compact card is too tall: ${rect.height}`);
+  assert.ok(rect.height <= 200, `Compact card is too tall: ${rect.height}`);
   assert.match(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('time').textContent`), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.getElementById('foot').hidden`), true);
   await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('.refresh').click()`);
@@ -227,14 +232,13 @@ try {
   await cdp.call('Page.navigate',{url:pageUrl+'dashboard'});
   let dashboardReady=false;
   for(let i=0;i<60&&!dashboardReady;i++) {
-    dashboardReady=await cdp.evaluate(`document.getElementById('credit-list')?.children.length===3`);
+    dashboardReady=await cdp.evaluate(`document.getElementById('reset-card-count')?.textContent==='1'`);
     if(!dashboardReady)await new Promise(resolve=>setTimeout(resolve,50));
   }
-  assert.ok(dashboardReady,'Dashboard renders all reset cards');
-  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/不足 1 天到期/);
-  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/已到期/);
-  assert.match(await cdp.evaluate(`document.getElementById('credit-list').textContent`),/上游未提供到期时间/);
-  assert.equal(await cdp.evaluate(`document.querySelector('#credit-list img')`),null);
+  assert.ok(dashboardReady,'Dashboard renders reset-card summary');
+  assert.match(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),/^\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal((await cdp.evaluate(`document.getElementById('reset-card-expiry').title`)).split('\n').length,3);
+  assert.equal(await cdp.evaluate(`document.getElementById('credit-balance').textContent`),'12.346');
   const dashboardShot=await cdp.call('Page.captureScreenshot',{format:'png'});
   await writeFile(new URL('preview-dashboard.png',artifacts),Buffer.from(dashboardShot.data,'base64'));
   await cdp.call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
@@ -243,12 +247,20 @@ try {
   await writeFile(new URL('preview-dashboard-mobile.png',artifacts),Buffer.from(mobileShot.data,'base64'));
   dashboardUsage={...dashboardUsage,reset_credits:{available_count:0,credits:[],error:null}};
   await cdp.evaluate(`load()`);
-  assert.equal(await cdp.evaluate(`document.getElementById('credits-summary').textContent`),'暂无剩余重置卡');
+  assert.equal(await cdp.evaluate(`document.getElementById('reset-card-count').textContent`),'0');
+  assert.equal(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),'暂无过期时间');
   dashboardUsage={...dashboardUsage,reset_credits:{available_count:null,credits:[],error:'重置卡查询失败'}};
   await cdp.evaluate(`load()`);
-  assert.equal(await cdp.evaluate(`document.getElementById('credits-error').textContent`),'重置卡查询失败');
+  assert.equal(await cdp.evaluate(`document.getElementById('reset-card-count').textContent`),'—');
   assert.equal(await cdp.evaluate(`document.querySelector('#five_hour .number').textContent`),'70');
-  console.log('Browser checks passed: quota controls, reset card expiry and errors, split sidebar layout, rail-only mode, dashboard desktop/mobile, cleanup.');
+  dashboardUsage={...dashboardUsage,credits:{balance:null,unlimited:false}};
+  await cdp.evaluate(`load()`);
+  assert.equal(await cdp.evaluate(`document.getElementById('credit-balance').textContent`),'—');
+  dashboardStatus=502;dashboardUsage={detail:'模拟请求失败'};
+  await cdp.evaluate(`load()`);
+  assert.match(await cdp.evaluate(`document.querySelector('#five_hour .error').textContent`),/模拟请求失败/);
+  assert.equal(await cdp.evaluate(`document.querySelector('#five_hour .number').textContent`),'70');
+  console.log('Browser checks passed: quota controls, credit summary, reset-card expiry, upgrade replacement, split sidebar, dashboard desktop/mobile and errors, cleanup.');
 } finally {
   try { await cdp?.call('Browser.close'); } catch { /* Browser may already be closed. */ }
   cdp?.close();

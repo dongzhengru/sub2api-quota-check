@@ -35,7 +35,7 @@ export async function inspectUpdate(source) {
   const { repository, branch, revision } = source;
   const blocked = message => ({ status: 'blocked', message });
   if (!repository || !branch || !revision) return blocked('缺少更新来源，请从 Git 仓库重新安装助手。');
-  if (await git(repository, ['rev-parse', '--show-toplevel']) !== repository) return blocked('源码位置已变化，请从新的 Git 仓库重新安装助手。');
+  if (path.resolve(await git(repository, ['rev-parse', '--show-toplevel'])) !== path.resolve(repository)) return blocked('源码位置已变化，请从新的 Git 仓库重新安装助手。');
   if (await git(repository, ['symbolic-ref', '--short', 'HEAD'], true) !== branch) return blocked('源码分支已切换，请切回安装时的分支后更新。');
   if (await git(repository, ['status', '--porcelain', '--untracked-files=normal'])) return blocked('源码有未提交修改，请提交或移走修改后重试。');
   const remote = await git(repository, ['config', '--get', `branch.${branch}.remote`], true);

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { adaptDlpLauncher } from '../lib/dlp.mjs';
 import { parsePorts, endpointStatus } from '../lib/endpoints.mjs';
 import { runDaemon } from '../lib/daemon.mjs';
@@ -60,7 +61,7 @@ test('both endpoints keep separate sessions for matching page IDs and clean up o
 
 test('existing DLP helper is recognized using full UTF-8 process paths', async () => {
   const bundle = '/Applications/Codex 额度助手.app';
-  const executable = `${bundle}/Contents/MacOS/CodexQuota`;
+  const executable = path.join(bundle, 'Contents/MacOS/CodexQuota');
   const result = await ensureDlpHelper({ bundle, log: 'unused',
     stopDaemon: () => assert.fail('must reuse the existing DLP helper'),
     launch: () => assert.fail('must not launch a duplicate helper'),

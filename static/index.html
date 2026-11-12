@@ -70,7 +70,7 @@ function renderCredits(data){
  const shortDate=value=>{const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:data.timezone,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value)).map(x=>[x.type,x.value]));return `${p.month}/${p.day} ${p.hour}:${p.minute}:${p.second}`;};
  const first=dates[0]; expiryLabel.textContent=first?shortDate(first):'暂无过期时间';
  expiryLabel.title=dates.length?`所有重置卡到期时间：\n${dates.map((value,index)=>`${index+1}. ${dateFmt.format(new Date(value))}`).join('\n')}`:'';
- const balance=Number(data.credits?.balance);document.getElementById('credit-balance').textContent=data.credits?.unlimited?'无限':Number.isFinite(balance)?balance.toFixed(3):'—';
+ const balance=data.credits?.balance==null?NaN:Number(data.credits.balance);document.getElementById('credit-balance').textContent=data.credits?.unlimited?'无限':Number.isFinite(balance)?balance.toFixed(3):'—';
 }
 /* legacy credit rows are intentionally omitted; the summary is the compact layout. */
 function renderCreditsLegacy(data){
@@ -124,7 +124,7 @@ async function load(){
   document.querySelectorAll('.cards .error').forEach(el=>{el.hidden=true;el.textContent='';});
   tick();
  }catch(error){
-  const creditError=document.getElementById('credits-error');creditError.textContent=(latest?'更新失败，重置卡信息为上次查询数据。':'')+error.message;creditError.hidden=false;
+  const creditError=document.getElementById('credits-error');if(creditError){creditError.textContent=(latest?'更新失败，重置卡信息为上次查询数据。':'')+error.message;creditError.hidden=false;}
   document.querySelectorAll('.cards .error').forEach(el=>{
    el.textContent=(latest?'更新失败，当前为上次查询数据。':'')+error.message;
    el.hidden=false;

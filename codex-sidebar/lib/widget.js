@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 7) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 8) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -124,7 +124,7 @@ function installQuotaWidget(snapshot, options = {}) {
       row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置`;
     }
     const info = current?.data?.reset_credits || {}, dates = (info.credits || []).map(c => c.expires_at).filter(Boolean).sort((a,b) => Date.parse(a)-Date.parse(b));
-    const count = root.getElementById('reset-card-count'), expiry = root.getElementById('reset-card-expiry'), balance = Number(current?.data?.credits?.balance);
+    const count = root.getElementById('reset-card-count'), expiry = root.getElementById('reset-card-expiry'), balance = current?.data?.credits?.balance == null ? NaN : Number(current.data.credits.balance);
     count.textContent = Number.isFinite(info.available_count) ? String(info.available_count) : '—';
     const shortDate = value => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone:'Asia/Shanghai', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' }).formatToParts(new Date(value)).map(x => [x.type, x.value])); return `${p.month}/${p.day} ${p.hour}:${p.minute}:${p.second}`; };
     expiry.textContent = dates[0] ? shortDate(dates[0]) : '暂无过期时间';
@@ -235,7 +235,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 7,
+    version: 8,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},

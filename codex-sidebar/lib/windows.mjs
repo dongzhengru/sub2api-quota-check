@@ -104,3 +104,19 @@ export async function windowsAppRunning(exe, run = exec) {
   const value = await query(`@(Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" | Select-Object -ExpandProperty ExecutablePath -ErrorAction SilentlyContinue) | ConvertTo-Json -Compress`, run);
   return [value].flat().some(item => typeof item === 'string' && item.toLowerCase() === exe.toLowerCase());
 }
+
+// Only called after an explicit --restart-client request. Recheck identity on
+// the live Process object before stopping a main process; never kill by name.
+export async function restartWindowsApp(exe, run = exec) {
+  if (!isWindowsAppExecutable(exe)) throw new Error('不支持的客户端路径');
+  const quoted = "'" + exe.replaceAll("'", "''") + "'";
+  await query(`$exe = ${quoted}; ` +
+    `$clients = @(Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'ChatGPT.exe'" | Where-Object { $_.ExecutablePath -eq $exe -and $_.CommandLine -notmatch '--type=' }); ` +
+    `foreach ($client in $clients) { ` +
+    `$live = Get-Process -Id $client.ProcessId -ErrorAction SilentlyContinue; ` +
+    `if (!$live) { continue }; ` +
+    // CIM exposes microseconds, while Process.StartTime can retain 100 ns ticks.
+    `if ($live.Path -ne $exe -or $live.StartTime.ToUniversalTime().ToString('yyyyMMddHHmmssffffff') -ne $client.CreationDate.ToUniversalTime().ToString('yyyyMMddHHmmssffffff')) { throw 'Client identity changed; restart cancelled' }; ` +
+    `Stop-Process -InputObject $live -ErrorAction Stop; ` +
+    `if (!$live.WaitForExit(10000)) { throw 'Client did not exit' } }; $true | ConvertTo-Json`, run);
+}
