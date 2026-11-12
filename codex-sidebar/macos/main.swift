@@ -59,6 +59,13 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var startItem: NSMenuItem!
     private var stopItem: NSMenuItem!
     private var dlpItem: NSMenuItem!
+    private var updateItem: NSMenuItem!
+    private var automaticUpdateItem: NSMenuItem!
+    private var updateLabel: NSMenuItem!
+    private var quitItem: NSMenuItem!
+    private var uninstallItem: NSMenuItem!
+    private var updateInProgress = false
+    private var lastUpdateCheck = Date.distantPast
     private var timer: Timer?
     private var busy = false
     private var quitting = false
@@ -71,7 +78,9 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: ["automaticUpdates": true])
         if CommandLine.arguments.contains("--attach-existing") { wanted = true }
+        if CommandLine.arguments.contains("--quota-disabled") { wanted = false }
         NSApp.setActivationPolicy(.accessory)
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: appName)
@@ -94,12 +103,26 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         _ = add(menu, "打开日志", #selector(openLog))
         _ = add(menu, "使用说明…", #selector(showHelp))
         menu.addItem(.separator())
-        _ = add(menu, "卸载额度助手…", #selector(uninstall))
-        _ = add(menu, "退出额度助手", #selector(quit), "q")
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        updateLabel = NSMenuItem(title: "版本 \(version)", action: nil, keyEquivalent: "")
+        updateLabel.isEnabled = false
+        menu.addItem(updateLabel)
+        updateItem = add(menu, "立即检查并更新", #selector(checkUpdate))
+        automaticUpdateItem = add(menu, "自动检查并安装更新", #selector(toggleAutomaticUpdates))
+        automaticUpdateItem.state = UserDefaults.standard.bool(forKey: "automaticUpdates") ? .on : .off
+        _ = add(menu, "打开更新日志", #selector(openUpdateLog))
+        menu.addItem(.separator())
+        uninstallItem = add(menu, "卸载额度助手…", #selector(uninstall))
+        quitItem = add(menu, "退出额度助手", #selector(quit), "q")
         item.menu = menu
         node = nodeRuntime()
-        timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.refreshStatus(recover: true) }
+        timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            self?.refreshUpdateStatus()
+            self?.checkForUpdates(manual: false)
+            self?.refreshStatus(recover: true)
+        }
         refreshStatus(recover: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.checkForUpdates(manual: false) }
     }
 
     private func add(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String = "") -> NSMenuItem {
@@ -118,7 +141,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quit()
         return .terminateCancel
     }
-    func menuWillOpen(_ menu: NSMenu) { refreshStatus(recover: false) }
+    func menuWillOpen(_ menu: NSMenu) { refreshUpdateStatus(); refreshStatus(recover: false) }
 
     private func alert(_ title: String, _ message: String) {
         NSApp.activate(ignoringOtherApps: true)
@@ -130,10 +153,58 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private func setBusy(_ value: Bool) {
         busy = value
-        startItem.isEnabled = !value
-        stopItem.isEnabled = !value
-        dlpItem.isEnabled = !value
+        startItem.isEnabled = !value && !updateInProgress
+        stopItem.isEnabled = !value && !updateInProgress
+        dlpItem.isEnabled = !value && !updateInProgress
+        quitItem.isEnabled = !value && !updateInProgress
+        uninstallItem.isEnabled = !value && !updateInProgress
+        updateItem.isEnabled = !value && !updateInProgress
         if value { statusLabel.title = "正在处理…" }
+    }
+
+    private func refreshUpdateStatus() {
+        let url = support.appendingPathComponent("update-status.json")
+        guard let data = try? Data(contentsOf: url),
+              let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let message = value["message"] as? String else { return }
+        let active = value["status"] as? String == "updating"
+        let pid = value["pid"] as? Int32 ?? 0
+        updateInProgress = active && pid > 0 && kill(pid, 0) == 0
+        updateLabel.title = active && !updateInProgress ? "上次更新中断，可重试" : message
+        updateLabel.toolTip = message
+        setBusy(busy)
+    }
+
+    private func checkForUpdates(manual: Bool) {
+        guard !busy && !quitting && !updateInProgress else { return }
+        if !manual {
+            guard UserDefaults.standard.bool(forKey: "automaticUpdates") else { return }
+            guard Date().timeIntervalSince(lastUpdateCheck) >= 3600 else { return }
+        }
+        guard node != nil else { return }
+        lastUpdateCheck = Date()
+        var arguments = ["update"]
+        if !wanted { arguments.append("--quota-disabled") }
+        if CommandLine.arguments.contains("--dlp-context") { arguments.append("--dlp-context") }
+        perform(arguments) { result in
+            self.updateInProgress = result.code == 0
+            self.setBusy(false)
+            self.updateLabel.title = result.code == 0 ? "正在检查远端更新…" : "检查更新失败"
+            self.updateItem.isEnabled = result.code != 0
+            if result.code != 0 && manual { self.alert("检查更新失败", result.output) }
+        }
+    }
+    @objc private func checkUpdate() { checkForUpdates(manual: true) }
+    @objc private func toggleAutomaticUpdates() {
+        let enabled = !UserDefaults.standard.bool(forKey: "automaticUpdates")
+        UserDefaults.standard.set(enabled, forKey: "automaticUpdates")
+        automaticUpdateItem.state = enabled ? .on : .off
+        if enabled { checkForUpdates(manual: true) }
+    }
+    @objc private func openUpdateLog() {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/share/codexNoProject/codex-quota-update/update.log")
+        if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.open(url) }
+        else { alert("暂无更新日志", "检查更新后会生成日志。") }
     }
 
     private func perform(_ arguments: [String], done: @escaping (CommandResult) -> Void) {
@@ -176,7 +247,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return "\(name)：\(ready ? "已连接" : "等待连接")"
                 }.joined(separator: "\n")
                 self.alert("额度助手状态", "\(self.statusLabel.title)\n\(connection)\n\(details)\n\nDLP 实例请从原 DLP 安全终端启动 gpt-safe。首次适配后需退出旧实例再重开。")
-            } else if recover && self.wanted && !running {
+            } else if recover && self.wanted && !running && !self.updateInProgress {
                 // Recover the watcher without launching a client; DLP may open later.
                 // Never call the launch path from a timer or application startup.
                 self.perform(["start", "--watch"]) { outcome in

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { adaptDlpLauncher } from '../lib/dlp.mjs';
 import { parsePorts, endpointStatus } from '../lib/endpoints.mjs';
 import { runDaemon } from '../lib/daemon.mjs';
+import { ensureDlpHelper } from '../lib/helper.mjs';
 
 test('DLP launcher adaptation preserves the safe context and is idempotent', () => {
   const source = '#!/bin/zsh\n[[ "$SAFE_SANDBOX" == "1" ]] || exit 1\n' +
@@ -54,4 +55,25 @@ test('both endpoints keep separate sessions for matching page IDs and clean up o
   assert.deepEqual([...mounted].sort(), [9341, 9342]);
   assert.deepEqual([...disposed].sort(), [9341, 9342]);
   assert.deepEqual([...closed].sort(), [9341, 9342]);
+});
+
+
+test('existing DLP helper is recognized using full UTF-8 process paths', async () => {
+  const bundle = '/Applications/Codex 额度助手.app';
+  const executable = `${bundle}/Contents/MacOS/CodexQuota`;
+  const result = await ensureDlpHelper({ bundle, log: 'unused',
+    stopDaemon: () => assert.fail('must reuse the existing DLP helper'),
+    launch: () => assert.fail('must not launch a duplicate helper'),
+    run: async (command, args, options) => {
+      if (command.endsWith('PlistBuddy')) return { stdout: 'top.zhengru.codex-quota' };
+      assert.equal(command, '/bin/ps');
+      assert.equal(args[0], '-ww');
+      assert.equal(options.env.LANG, 'en_US.UTF-8');
+      assert.equal(options.env.LC_ALL, 'en_US.UTF-8');
+      if (args.includes('-axo')) return { stdout: `4242 ${executable}\n` };
+      assert.ok(args.includes('4242'));
+      return { stdout: `${executable} --attach-existing --dlp-context\n` };
+    },
+  });
+  assert.deepEqual(result, { reused: true, pid: 4242 });
 });

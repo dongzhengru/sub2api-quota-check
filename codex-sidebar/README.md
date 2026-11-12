@@ -76,11 +76,31 @@ bash codex-sidebar/macos/install.sh
 
 构建产物默认位于 `~/.codex/share/codexNoProject/codex-quota-build/`，可用 `CODEX_QUOTA_BUILD_DIR` 指定。安装默认到 `~/Applications`；更新其他安装位置可通过 `CODEX_QUOTA_INSTALL_DIR` 指定。
 
-从 DLP 终端更新安装时，可设置 `CODEX_QUOTA_DLP=1`，使安装器直接在当前上下文启动助手；默认安装行为仍通过系统打开应用。
+从 DLP 终端更新安装时，安装器会根据已有的 `SAFE_SANDBOX=1` 自动直接启动助手，保留安全上下文；也可显式设置 `CODEX_QUOTA_DLP=1`。普通环境仍通过系统打开应用。修复后只需重启额度助手，正在运行的 GPT 可保持不动。
 
 DLP 启动使用已有代理环境变量，后台通过 `NODE_USE_ENV_PROXY=1` 启用 Node 的环境代理，同时为本机 CDP 配置回环地址直连。
 
 构建需要 macOS 和 Xcode Command Line Tools / Xcode；使用本机临时签名，没有 Apple 开发者公证证书。安装脚本会迁移正在运行的源码版额度后台，不退出 ChatGPT。安装器每次从当前源码重建，并使用与构建脚本一致的目录，避免安装旧组件；构建失败时不替换现有助手。
+
+### 自动检查与编译更新（macOS）
+
+从 0.3.4 起，菜单栏助手默认在启动后检查一次，运行期间每小时再检查。发现安装时分支所跟踪的远端有新提交后，自动快速前进拉取源码、重新编译、安装并重启助手。菜单提供 **立即检查并更新**、**自动检查并安装更新** 开关及 **打开更新日志**；菜单中会显示检查、编译或失败原因。
+
+旧版助手需要先在 Git 仓库中安装一次，才能获得自动更新功能：
+
+```sh
+bash codex-sidebar/macos/install.sh
+```
+
+构建会记录源码仓库位置、分支和提交号，因此安装后请保留该 Git 仓库，确保可以访问配置的远端，并安装 Git、Node.js 22+ 和 Xcode Command Line Tools。源码目录有未提交修改（包括未跟踪文件）、本地未推送提交、分支分叉或切换分支时，更新会暂停并在菜单提示；不会自动覆盖这些修改。移动源码后，从新位置重新安装一次即可。
+
+编译成功后才停止旧助手和额度后台；编译失败继续使用原版，下次检查会重试，即使源码已拉取也不会漏掉安装。更新后保留额度显示的启停状态，以及普通／DLP 启动上下文，客户端保持运行。更新期间先等待当前任务完成，再操作额度启停或退出助手；关闭自动更新开关仅停止后续的自动检查。此功能更新本机 macOS 额度助手，服务器后端及 Docker 部署仍按原部署流程更新。
+
+更新日志、独立更新进程脚本和构建产物位于 `~/.codex/share/codexNoProject/codex-quota-update/`；检查状态位于 `~/Library/Application Support/CodexQuotaSidebar/update-status.json`。可以单独检查远端而不拉取或安装：
+
+```sh
+node codex-sidebar/cli.mjs check-update --json
+```
 
 ### DLP 安全上下文的 GPT
 

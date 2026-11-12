@@ -11,6 +11,7 @@ import { assertAppListener, removeWidgets, runDaemon } from './lib/daemon.mjs';
 import { parsePorts, endpointStatus } from './lib/endpoints.mjs';
 import { matchesDaemonProcess, processOptions } from './lib/process.mjs';
 import { findWindowsApp, windowsAppRunning } from './lib/windows.mjs';
+import { inspectUpdate, startUpdate, updateSource } from './lib/update.mjs';
 
 const exec = promisify(execFile);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -148,6 +149,20 @@ async function stop() {
 
 async function main() {
   switch (command) {
+    case 'check-update': {
+      const result = await inspectUpdate(await updateSource(ROOT));
+      console.log(args.includes('--json') ? JSON.stringify(result) : result.message);
+      if (result.status === 'blocked') process.exitCode = 1;
+      break;
+    }
+    case 'update': {
+      if (!bundled) throw new Error('请在已安装的额度助手中使用更新功能；首次安装请运行 bash codex-sidebar/macos/install.sh。');
+      const result = await startUpdate({ source: await updateSource(ROOT), state: STATE,
+        bundle: path.resolve(ROOT, '../../..'), enabled: !args.includes('--quota-disabled'),
+        dlp: args.includes('--dlp-context') });
+      console.log(JSON.stringify(result));
+      break;
+    }
     case 'dlp-helper': {
       if (!bundled) throw new Error('请通过已安装额度助手的 DLP 启动器调用此命令');
       await mkdir(STATE, { recursive: true, mode: 0o700 });
@@ -202,7 +217,7 @@ async function main() {
       }
       break;
     }
-    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--json]');
+    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch|check-update|update [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--json]');
   }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

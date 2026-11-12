@@ -20,6 +20,8 @@ Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天
 
 ## 运行
 
+macOS 菜单栏助手支持启动后及每小时自动检查远端、拉取代码、编译和安装更新，也可在菜单里立即检查或关闭自动更新。首次启用需执行一次 `bash codex-sidebar/macos/install.sh`，详见[自动更新说明](codex-sidebar/README.md#自动检查与编译更新macos)。
+
 需要 Python 3.9 或更新版本。仅使用 Codex 侧栏时可以跳过本节。
 
 ### Windows（PowerShell）

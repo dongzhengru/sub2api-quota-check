@@ -16,6 +16,15 @@ xcrun swiftc -O -target "$(uname -m)-apple-macos13.0" -module-cache-path "$quota
 cp "$quota_source/Info.plist" "$quota_app/Contents/Info.plist"
 cp "$quota_engine/cli.mjs" "$quota_engine/package.json" "$quota_app/Contents/Resources/engine/"
 /usr/bin/ditto "$quota_engine/lib" "$quota_app/Contents/Resources/engine/lib"
+source "$quota_engine/runtime.sh"
+"$quota_node" --input-type=module - "$quota_engine/.." "$quota_app/Contents/Resources/update-source.json" <<'JS'
+import { execFileSync } from 'node:child_process';
+import { realpathSync, writeFileSync } from 'node:fs';
+const repository = realpathSync(process.argv[2]);
+const git = args => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' }).trim();
+writeFileSync(process.argv[3], JSON.stringify({ repository,
+  branch: git(['symbolic-ref', '--short', 'HEAD']), revision: git(['rev-parse', 'HEAD']) }));
+JS
 xcrun swiftc -O -module-cache-path "$quota_build/module-cache" "$quota_source/icon.swift" -o "$quota_build/make-icon"
 "$quota_build/make-icon" "$quota_build/icon.png"
 mkdir -p "$quota_build/Quota.iconset"
