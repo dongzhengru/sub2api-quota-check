@@ -145,7 +145,21 @@ class UsageService:
                     'resets_at': reset,
                     'window_stats': window.get('window_stats'),
                 }
-            return {'updated_at': data.get('updated_at'), **windows}
+            refresh = await self.client.post(
+                '/api/v1/admin/openai/accounts/%s/quota/refresh' % self.account_id,
+                headers={'Authorization': 'Bearer ' + self.token},
+            )
+            quota = self.unpack(refresh, stage='点数额度查询')
+            reset_credits = quota.get('rate_limit_reset_credits') or {}
+            credits = quota.get('credits') or {}
+            expires = [item.get('expires_at') for item in reset_credits.get('credits', [])
+                       if isinstance(item, dict) and isinstance(item.get('expires_at'), str)]
+            return {'updated_at': data.get('updated_at'), **windows,
+                    'reset_cards': {'available_count': reset_credits.get('available_count', 0),
+                                    'expires_at': expires},
+                    'credits': {'has_credits': bool(credits.get('has_credits')),
+                                'unlimited': bool(credits.get('unlimited')),
+                                'balance': credits.get('balance')}}
 
     def snapshot(self, hit):
         return {**copy.deepcopy(self.cached), 'timezone': self.tz, 'cache': {

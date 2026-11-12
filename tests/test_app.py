@@ -16,6 +16,14 @@ def payload():
     }}
 
 
+def refresh_payload():
+    return {'code': 0, 'data': {
+        'rate_limit_reset_credits': {'available_count': 2, 'credits': [
+            {'expires_at': '2026-11-30T19:16:43.963099Z'}]},
+        'credits': {'has_credits': True, 'unlimited': False, 'balance': '732.8715220000'},
+    }}
+
+
 def test_cache_concurrency_and_expiration():
     async def run():
         calls = []
@@ -25,12 +33,14 @@ def test_cache_concurrency_and_expiration():
             if request.url.path.endswith('/login'):
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test', 'expires_in': 86400}})
             assert request.headers['authorization'] == 'Bearer test'
+            if request.url.path.endswith('/quota/refresh'):
+                return httpx.Response(200, json=refresh_payload())
             assert request.url.params['timezone'] == 'Asia/Shanghai'
             return httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
             service = UsageService(client, 'test', 'test')
             results = await asyncio.gather(*(service.get() for _ in range(20)))
-            assert len(calls) == 2
+            assert len(calls) == 3
             assert sum(not r['cache']['hit'] for r in results) == 1
             assert results[0]['five_hour']['remaining_percent'] == 93
             assert results[0]['seven_day']['remaining_percent'] == 74
@@ -38,7 +48,7 @@ def test_cache_concurrency_and_expiration():
             assert (await service.get())['five_hour']['remaining_percent'] == 93
             service.cache_deadline = 0
             assert not (await service.get())['cache']['hit']
-            assert len(calls) == 3
+            assert len(calls) == 5
     asyncio.run(run())
 
 
@@ -49,6 +59,8 @@ def test_unauthorized_relogin_once():
             if request.url.path.endswith('/login'):
                 counts['login'] += 1
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test'}})
+            if request.url.path.endswith('/quota/refresh'):
+                return httpx.Response(200, json=refresh_payload())
             counts['usage'] += 1
             return httpx.Response(401) if counts['usage'] == 1 else httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:

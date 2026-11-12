@@ -13,9 +13,14 @@ export function validateUsage(data) {
   // Only transfer fields the widget actually needs into the renderer.
   return {
     five_hour: pickWindow(data.five_hour), seven_day: pickWindow(data.seven_day),
+    reset_cards: { available_count: Number.isFinite(data.reset_cards?.available_count) ? data.reset_cards.available_count : 0,
+      expires_at: Array.isArray(data.reset_cards?.expires_at) ? data.reset_cards.expires_at.filter(x => typeof x === 'string') : [] },
+    credits: { unlimited: data.credits?.unlimited === true, balance: data.credits?.balance ?? null },
     fetched_at: Number.isFinite(Date.parse(data.cache?.fetched_at)) ? data.cache.fetched_at : null,
   };
 }
+
+export const REFRESH_ENDPOINT = 'https://gateway.zhengru.top/api/quota/api/quota-refresh';
 
 function pickWindow(w) {
   return { used_percent: w.used_percent, remaining_percent: w.remaining_percent, resets_at: w.resets_at };

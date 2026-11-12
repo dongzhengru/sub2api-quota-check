@@ -25,6 +25,7 @@ main{width:100%;max-width:1000px;padding:40px 24px}
 .reset span{color:var(--muted);white-space:nowrap}
 .reset time{text-align:right;font-variant-numeric:tabular-nums}
 .countdown{font-size:11px;color:var(--muted);text-align:right;margin-top:9px;line-height:1.6}
+.account-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:24px}.summary-item{padding:20px 24px}.summary-value{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:12px}.summary-label{font-size:12px;color:var(--muted)}.summary-detail{font-size:12px;color:var(--muted);margin-top:6px}
 .error{color:#9a4a35;font-size:12px;line-height:1.7;margin:20px 0 0;overflow-wrap:anywhere}
 [hidden]{display:none!important}
 .breakdown{margin-top:24px;padding:28px}
@@ -44,6 +45,7 @@ button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#
 <section class="card" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="5 小时已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 <section class="card seven" id="seven_day"><div class="cardhead"><h2>7 天额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="7 天已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 </div>
+<div class="account-summary"><section class="card summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count">—</div><div class="summary-detail" id="reset-card-expiry">等待查询</div></section><section class="card summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></section></div>
 <section class="card breakdown" aria-labelledby="breakdown-title">
 <div class="cardhead"><h2 id="breakdown-title">用户 Token 用量</h2><span class="status" id="stats-zone"></span></div>
 <div class="filters" aria-label="快捷日期"><button type="button" data-days="1" class="active" aria-pressed="true">1 天</button><button type="button" data-days="3" aria-pressed="false">3 天</button><button type="button" data-days="7" aria-pressed="false">7 天</button></div>
@@ -82,6 +84,14 @@ async function load(){
    card.querySelector('time').dateTime=w.resets_at;
   }
   latest=data;
+  document.getElementById('reset-card-count').textContent=Number.isFinite(data.reset_cards?.available_count)?data.reset_cards.available_count.toLocaleString('zh-CN'):'—';
+  const expiry=data.reset_cards?.expires_at?.[0];
+  const expiryLabel=document.getElementById('reset-card-expiry');
+  const expiryList=Array.isArray(data.reset_cards?.expires_at)?data.reset_cards.expires_at:[];
+  expiryLabel.textContent=expiry?`最近过期：${dateFmt.format(new Date(expiry))}`:'暂无过期时间';
+  expiryLabel.title=expiryList.length?`所有重置卡到期时间：\n${expiryList.map((value,index)=>`${index+1}. ${dateFmt.format(new Date(value))}`).join('\n')}`:'';
+  const balance=Number(data.credits?.balance);
+  document.getElementById('credit-balance').textContent=data.credits?.unlimited?'无限':Number.isFinite(balance)?balance.toLocaleString('en-US',{maximumFractionDigits:3}):'—';
   document.querySelectorAll('.cards .error').forEach(el=>{el.hidden=true;el.textContent='';});
   tick();
  }catch(error){

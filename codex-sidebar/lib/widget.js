@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 4) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 5) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -37,6 +37,7 @@ function installQuotaWidget(snapshot, options = {}) {
       .track{margin-top:3px;height:3px;border-radius:4px;overflow:hidden;background:color-mix(in srgb,currentColor 9%,transparent)}
       .fill{height:100%;border-radius:4px;background:#16a77a;transition:width .35s ease}
       .reset{display:flex;justify-content:space-between;gap:4px;font-size:9px;opacity:.5;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+      .summary{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.summary-item{min-width:0}.summary-label{font-size:9px;opacity:.55}.summary-value{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-size:9px;opacity:.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .foot{margin-top:5px;font-size:10px;color:#df8842}.foot[hidden]{display:none}.stale .fill{opacity:.45}
       @media(prefers-reduced-motion:reduce){.fill{transition:none}.refresh svg{animation:none!important}}
     </style>
@@ -44,6 +45,7 @@ function installQuotaWidget(snapshot, options = {}) {
       <div class="head"><span class="title">网关额度</span><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
+      <div class="summary"><div class="summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count">—</div><div class="summary-detail" id="reset-card-expiry">等待查询</div></div><div class="summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
     </section>
     <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行">关闭</button></div>
@@ -95,6 +97,13 @@ function installQuotaWidget(snapshot, options = {}) {
       row.querySelector('.countdown').textContent = countdown(w.resets_at);
       row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置`;
     }
+    const resetCards = current?.data?.reset_cards;
+    root.getElementById('reset-card-count').textContent = Number.isFinite(resetCards?.available_count) ? String(resetCards.available_count) : '—';
+    const expiryLabel = root.getElementById('reset-card-expiry');
+    expiryLabel.textContent = resetCards?.expires_at?.[0] ? `到期 ${exactDate(resetCards.expires_at[0])}` : '暂无到期时间';
+    expiryLabel.title = resetCards?.expires_at?.length ? `所有重置卡到期时间：\n${resetCards.expires_at.map((value, index) => `${index + 1}. ${exactDate(value)}`).join('\n')}` : '';
+    const balance = Number(current?.data?.credits?.balance);
+    root.getElementById('credit-balance').textContent = current?.data?.credits?.unlimited ? '无限' : Number.isFinite(balance) ? balance.toLocaleString('en-US', { maximumFractionDigits: 3 }) : '—';
     const foot = root.getElementById('foot');
     foot.hidden = !stale;
     foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接') : '';
@@ -194,7 +203,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 4,
+    version: 5,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},
