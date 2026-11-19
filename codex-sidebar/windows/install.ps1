@@ -12,13 +12,21 @@ $shell = New-Object -ComObject WScript.Shell
 $package = Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1
 $icon = if ($package) { Join-Path $package.InstallLocation 'app\ChatGPT.exe' } else { $wscript }
 if (!(Test-Path -LiteralPath $icon)) { $icon = $wscript }
+$trayLauncher = Join-Path $PSScriptRoot 'tray.vbs'
 foreach ($dir in @($DesktopDirectory, $ProgramsDirectory, $BackupDirectory)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
+# One launch entry per surface: it starts the client, the quota daemon and
+# attaches the tray assistant, so separate Codex/assistant links are redundant.
 $entries = @(
-    @{Path=(Join-Path $DesktopDirectory 'Codex.lnk'); Backup='Desktop-Codex.lnk'},
     @{Path=(Join-Path $DesktopDirectory 'Codex 额度侧栏.lnk'); Backup='Desktop-Quota.lnk'},
-    @{Path=(Join-Path $ProgramsDirectory 'Codex.lnk'); Backup='Programs-Codex.lnk'}
+    @{Path=(Join-Path $ProgramsDirectory 'Codex 额度侧栏.lnk'); Backup='Programs-Quota.lnk'}
+)
+$removals = @(
+    @{Path=(Join-Path $DesktopDirectory 'Codex.lnk'); Backup='Desktop-Codex.lnk'},
+    @{Path=(Join-Path $ProgramsDirectory 'Codex.lnk'); Backup='Programs-Codex.lnk'},
+    @{Path=(Join-Path $DesktopDirectory 'Codex 额度助手.lnk'); Backup='Desktop-Assistant.lnk'},
+    @{Path=(Join-Path $ProgramsDirectory 'Codex 额度助手.lnk'); Backup='Programs-Assistant.lnk'}
 )
 # Pinned taskbar links are independent copies. Updating Desktop/Programs does
 # not repair their old Store target or AppUserModel activation properties.
@@ -38,9 +46,35 @@ $legacyPath = Join-Path $ProgramsDirectory 'ChatGPT.lnk'
 if (Test-Path -LiteralPath $legacyPath) {
     $legacy = $shell.CreateShortcut($legacyPath)
     if ($legacy.TargetPath -match '\\WindowsApps\\OpenAI\.Codex_' -or $legacy.Arguments -eq ('"' + $launcher + '"')) {
-        $entries += @{Path=$legacyPath; Backup='Programs-ChatGPT.lnk'}
+        $removals += @{Path=$legacyPath; Backup='Programs-ChatGPT.lnk'}
     }
 }
+# Only retire links this project owns; unrelated user shortcuts stay untouched.
+$removals = @($removals | Where-Object {
+    if (!(Test-Path -LiteralPath $_.Path)) { return $false }
+    $link = $shell.CreateShortcut($_.Path)
+    $link.Arguments -eq ('"' + $launcher + '"') -or $link.Arguments -eq ('"' + $trayLauncher + '"') -or
+        $link.TargetPath -match '\\WindowsApps\\OpenAI\.Codex_' -or $link.TargetPath -match '\\(?:Codex|ChatGPT)\.exe$'
+})
+if (!('QuotaShortcutNotify' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class QuotaShortcutNotify {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern void SHChangeNotify(uint change, uint flags, string path, IntPtr other);
+}
+'@
+}
+function Backup-ThenRemove {
+    param([string]$Path, [string]$Backup)
+    if (!(Test-Path -LiteralPath $Path)) { return }
+    if (!(Test-Path -LiteralPath $Backup)) { Copy-Item -LiteralPath $Path -Destination $Backup }
+    Remove-Item -LiteralPath $Path
+    [QuotaShortcutNotify]::SHChangeNotify(0x2000, 0x1005, $Path, [IntPtr]::Zero)
+    Write-Output ('Removed ' + $Path)
+}
+foreach ($entry in $removals) { Backup-ThenRemove $entry.Path (Join-Path $BackupDirectory $entry.Backup) }
 foreach ($entry in $entries) {
     $backup = Join-Path $BackupDirectory $entry.Backup
     if ((Test-Path -LiteralPath $entry.Path) -and !(Test-Path -LiteralPath $backup)) {
@@ -58,16 +92,6 @@ foreach ($entry in $entries) {
     $link.Save()
     # Tell Explorer that the pinned copy changed, without restarting Explorer
     # or interrupting the running Codex application.
-    if (!('QuotaShortcutNotify' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class QuotaShortcutNotify {
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    public static extern void SHChangeNotify(uint change, uint flags, string path, IntPtr other);
-}
-'@
-    }
     [QuotaShortcutNotify]::SHChangeNotify(0x2000, 0x1005, $entry.Path, [IntPtr]::Zero)
     Write-Output $entry.Path
 }

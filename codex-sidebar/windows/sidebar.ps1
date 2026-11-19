@@ -50,6 +50,17 @@ if ($result -eq 2 -and $Interactive -and $Action -eq 'start' -and !$Watch -and !
     $ErrorActionPreference = 'Stop'
 }
 if ($result -ne 0) { throw ($output -join [Environment]::NewLine) }
+# Successful starts attach the tray assistant so the quota helper lives in the
+# notification area instead of a console window. Never fail the start over it.
+if ($Action -eq 'start') {
+    $trayScript = Join-Path $PSScriptRoot 'tray.ps1'
+    if (Test-Path -LiteralPath $trayScript) {
+        try {
+            $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Start-Process -FilePath $powershellExe -ArgumentList @('-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $trayScript + '"'), '-AttachExisting') -WindowStyle Hidden
+        } catch { }
+    }
+}
 $output | Write-Output
 exit 0
 } catch {
