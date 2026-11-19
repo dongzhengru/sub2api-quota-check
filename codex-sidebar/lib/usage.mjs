@@ -48,18 +48,25 @@ export async function fetchUsage({ fetcher = fetch } = {}) {
   return validateUsage(await response.json());
 }
 
+// 北京时间 02:00–08:30 暂停自动刷新，仅手动刷新可请求上游。
+export function isQuietHours(timestamp) {
+  const minutes = Math.floor(timestamp / 60_000 + 8 * 60) % 1440;
+  return minutes >= 120 && minutes < 510;
+}
+
 export class UsagePoller {
-  constructor({ fetcher = fetchUsage, interval = 120_000, now = Date.now } = {}) {
+  constructor({ fetcher = fetchUsage, interval = 120_000, now = Date.now, quietHours = isQuietHours } = {}) {
     this.fetcher = fetcher;
     this.interval = interval;
     this.now = now;
+    this.quietHours = quietHours;
     this.next = 0;
     this.pending = null;
     this.snapshot = { data: null, error: null, receivedAt: null, loading: false };
   }
   async refresh({ force = false } = {}) {
     if (this.pending) return this.pending;
-    if (!force && this.now() < this.next) return this.snapshot;
+    if (!force && (this.now() < this.next || this.quietHours(this.now()))) return this.snapshot;
     this.next = this.now() + this.interval;
     this.snapshot = { ...this.snapshot, loading: true };
     this.pending = (async () => {

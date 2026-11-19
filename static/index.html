@@ -32,6 +32,7 @@ main{width:100%;max-width:1000px;padding:40px 24px}
 .account-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:24px}.summary-item{padding:20px 24px}.summary-value{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:12px}.summary-label{font-size:12px;color:var(--muted)}.summary-detail{font-size:12px;color:var(--muted);margin-top:6px;white-space:pre-line}.summary-detail.expiry{color:var(--ink)}
 .filters,.dates,.pagination{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filters{margin:22px 0 12px}.dates{margin-bottom:18px}
+.quota-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 button,input,select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:8px 12px}
 button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#4e8767}button:disabled{opacity:.45;cursor:default}
 .dates label,.pagination,.status{font-size:12px;color:var(--muted)}
@@ -42,6 +43,7 @@ button{cursor:pointer}button.active{background:#4e8767;color:#fff;border-color:#
 </head>
 <body>
 <main aria-label="额度概览">
+<div class="quota-toolbar"><button type="button" id="manual-refresh">手动刷新</button><span class="status" id="quiet-note" hidden>北京时间凌晨 2:00–8:30 已暂停自动刷新，点击上方按钮可手动查询。</span></div>
 <div class="cards">
 <section class="card" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="5 小时已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 <section class="card seven" id="seven_day"><div class="cardhead"><h2>7 天额度</h2></div><div class="metric"><span class="number">—</span><span class="percent">%</span></div><div class="label">当前剩余额度</div><div class="bar" role="progressbar" aria-label="7 天已使用额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
@@ -91,6 +93,7 @@ function renderCreditsLegacy(data){
  }
 }
 function tick(){
+ document.getElementById('quiet-note').hidden=!inQuietHours();
  if(!latest)return;
  for(const el of document.querySelectorAll('[data-credit-expiry]')){
   const ms=Date.parse(el.dataset.creditExpiry)-Date.now(),days=Math.ceil(ms/86400000);
@@ -198,6 +201,10 @@ document.getElementById('page-size').addEventListener('change',e=>{statsSize=Num
 document.getElementById('prev-page').addEventListener('click',()=>loadStats(statsPage-1));
 document.getElementById('next-page').addEventListener('click',()=>loadStats(statsPage+1));
 (async()=>{try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
-load();setInterval(load,60000);setInterval(tick,1000);
+// 北京时间凌晨 2:00–8:30 暂停自动刷新，仅手动刷新可请求上游。
+function inQuietHours(){const m=Math.floor(Date.now()/60000+480)%1440;return m>=120&&m<510;}
+function autoLoad(){if(inQuietHours()){document.getElementById('quiet-note').hidden=false;return;}load();}
+document.getElementById('manual-refresh').addEventListener('click',()=>load());
+autoLoad();setInterval(autoLoad,60000);setInterval(tick,1000);
 </script>
 </body></html>

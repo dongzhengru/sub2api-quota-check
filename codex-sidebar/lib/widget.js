@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 8) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 9) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -100,7 +100,9 @@ function installQuotaWidget(snapshot, options = {}) {
   function paint() {
     if (usageDeadline && Date.now()>usageDeadline) receiveUsage({id:usageId,error:'用量查询超时，请检查后台连接后重试。'});
     const disconnected = Date.now() - lastContact > 45_000;
-    const stale = !!current?.error || disconnected || (current?.receivedAt != null && Date.now() - current.receivedAt > 270_000);
+    const beijingMinutes = Math.floor(Date.now() / 60_000 + 8 * 60) % 1440;
+    const quiet = beijingMinutes >= 120 && beijingMinutes < 510;
+    const stale = !!current?.error || disconnected || (!quiet && current?.receivedAt != null && Date.now() - current.receivedAt > 270_000);
     root.querySelector('.card').classList.toggle('stale', stale);
     toggle.title = stale ? '更新失败，展开查看详情' : '点击' + (collapsed ? '展开' : '收起') + '额度详情';
     const button = root.querySelector('.refresh');
@@ -131,9 +133,13 @@ function installQuotaWidget(snapshot, options = {}) {
     expiry.title = dates.length ? `所有重置卡到期时间：\n${dates.map((value,index) => `${index + 1}. ${exactDate(value)}`).join('\n')}` : '';
     root.getElementById('credit-balance').textContent = current?.data?.credits?.unlimited ? '无限' : Number.isFinite(balance) ? balance.toFixed(3) : '—';
     const foot = root.getElementById('foot');
-    foot.hidden = !stale;
-    foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接') : '';
+    const paused = quiet && !stale;
+    foot.hidden = !stale && !paused;
+    foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接')
+      : paused ? '凌晨 2:00–8:30 已暂停自动刷新 · 可点击手动刷新' : '';
     foot.title = stale ? (current?.error || '本机额度程序已断开') : '';
+    foot.style.color = paused ? 'inherit' : '';
+    foot.style.opacity = paused ? '.6' : '';
   }
   const dialog = root.querySelector('dialog');
   const usageStatus = root.querySelector('.usage-status');
@@ -235,7 +241,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 8,
+    version: 9,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},

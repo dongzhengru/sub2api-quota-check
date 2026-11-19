@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, validateResetCredits } from '../lib/usage.mjs';
+import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, validateResetCredits, isQuietHours } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
 import { assertAppListener as assertPlatformAppListener } from '../lib/daemon.mjs';
 import { proxyEnvironment } from '../lib/helper.mjs';
@@ -35,7 +35,7 @@ test('HTTP failure never becomes a successful quota response', async () => {
 });
 
 test('concurrent requests coalesce and refresh is rate limited', async () => {
-  let calls = 0; let now = 100;
+  let calls = 0; let now = 36_000_000;
   const poller = new UsagePoller({ now: () => now, fetcher: async () => { calls++; return validateUsage(sample()); } });
   await Promise.all([poller.refresh(), poller.refresh(), poller.refresh()]);
   assert.equal(calls, 1); assert.equal(poller.snapshot.data.five_hour.remaining_percent, 70);
@@ -44,21 +44,21 @@ test('concurrent requests coalesce and refresh is rate limited', async () => {
 });
 
 test('failed refresh keeps the last result and explicitly marks it stale', async () => {
-  let now = 0; let fail = false;
+  let now = 36_000_000; let fail = false;
   const poller = new UsagePoller({ now: () => now, fetcher: async () => {
     if (fail) throw new Error('network unavailable');
     return validateUsage(sample());
   } });
   await poller.refresh(); const original = poller.snapshot.data;
-  now = 120_000; fail = true; await poller.refresh();
+  now += 120_000; fail = true; await poller.refresh();
   assert.equal(poller.snapshot.data, original);
-  assert.equal(poller.snapshot.receivedAt, 0);
+  assert.equal(poller.snapshot.receivedAt, 36_000_000);
   assert.equal(poller.snapshot.error, 'network unavailable');
 });
 
 test('manual refresh bypasses the 120 second interval, coalesces requests, and clears loading', async () => {
   let calls = 0;
-  const poller = new UsagePoller({ fetcher: async () => { calls++; return validateUsage(sample()); } });
+  const poller = new UsagePoller({ quietHours: () => false, fetcher: async () => { calls++; return validateUsage(sample()); } });
   await poller.refresh();
   await poller.refresh(); assert.equal(calls, 1);
   const a = poller.refresh({ force: true });
@@ -66,6 +66,26 @@ test('manual refresh bypasses the 120 second interval, coalesces requests, and c
   const b = poller.refresh({ force: true });
   await Promise.all([a, b]);
   assert.equal(calls, 2); assert.equal(poller.snapshot.loading, false);
+});
+
+test('quiet hours follow Beijing time 02:00 to 08:30 regardless of host timezone', () => {
+  const at = (hour, minute) => Date.UTC(2026, 10, 19, hour - 8, minute);
+  assert.equal(isQuietHours(at(1, 59)), false);
+  assert.equal(isQuietHours(at(2, 0)), true);
+  assert.equal(isQuietHours(at(8, 29)), true);
+  assert.equal(isQuietHours(at(8, 30)), false);
+  assert.equal(isQuietHours(at(12, 0)), false);
+});
+
+test('auto refresh is paused during quiet hours while manual refresh still works', async () => {
+  let calls = 0; let now = Date.UTC(2026, 10, 19, 2 - 8, 30);
+  const poller = new UsagePoller({ now: () => now, fetcher: async () => { calls++; return validateUsage(sample()); } });
+  await poller.refresh(); assert.equal(calls, 0); assert.equal(poller.snapshot.data, null);
+  await poller.refresh({ force: true }); assert.equal(calls, 1);
+  now += 120_000; await poller.refresh(); assert.equal(calls, 1);
+  // 窗口结束后自动刷新立即恢复，无需等待新的间隔。
+  now = Date.UTC(2026, 10, 19, 8 - 8, 30);
+  await poller.refresh(); assert.equal(calls, 2);
 });
 
 test('CDP listener uses mapped executable, independent of mutable process title', async () => {
