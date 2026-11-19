@@ -1,0 +1,58 @@
+name: 客户端构建与发布
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 测试、构建并发布客户端
+    runs-on: macos-15
+    env:
+      CODEX_QUOTA_BUILD_DIR: ${{ runner.temp }}/quota-build
+    steps:
+      - name: 检出源代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 固定检出分支
+        # tag 检出是 detached HEAD，build.sh 需要 symbolic-ref 读分支名
+        run: git checkout -B release-build
+
+      - name: 运行客户端测试
+        run: node --test codex-sidebar/test/*.test.mjs
+
+      - name: 构建 macOS 菜单栏助手
+        run: bash codex-sidebar/macos/build.sh
+
+      - name: 打包产物
+        run: |
+          mkdir dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$CODEX_QUOTA_BUILD_DIR/Codex 额度助手.app" \
+            dist/codex-quota-macos-arm64.zip
+          git ls-files -z -- codex-sidebar '*.cmd' '*.command' \
+            | xargs -0 zip -q dist/codex-quota-scripts.zip
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          body: |
+            ## 安装说明
+
+            - **codex-quota-macos-arm64.zip**：macOS 菜单栏助手（仅 Apple Silicon，macOS 13+）。解压后把 `Codex 额度助手.app` 拖入「应用程序」或 `~/Applications`。
+              应用为本机临时签名、未公证，首次打开如被拦截请右键 →「打开」，或执行：
+              ```sh
+              xattr -dr com.apple.quarantine "/Applications/Codex 额度助手.app"
+              ```
+              Release 版不依赖源码仓库，内置的 Git 自动更新不可用，请从后续 Release 下载新版覆盖安装。
+            - **codex-quota-scripts.zip**：Windows 启动入口与跨平台源码版（需 Node.js 22+，无需 npm install）。解压后 Windows 双击 `安装额度启动入口.cmd`，macOS 双击 `启动额度侧栏.command`。详见包内 `codex-sidebar/README.md`。
