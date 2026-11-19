@@ -104,7 +104,9 @@ tbody tr:hover{background:var(--seg)}
 .hm-cell[data-level="3"]{background:var(--hm3)}
 .hm-cell[data-level="4"]{background:var(--hm4)}
 .hm-cell.pad{visibility:hidden}
+.hm-cell[data-date]{cursor:pointer}
 .hm-cell[data-date]:hover{outline:1px solid var(--ink);outline-offset:1px}
+.hm-cell.selected,.hm-cell.selected:hover{outline:2px solid var(--accent);outline-offset:1px}
 .hm-cell.skel,.skel-bar{background:linear-gradient(100deg,var(--hm0) 40%,var(--skel-hi) 50%,var(--hm0) 60%);background-size:200% 100%;animation:sweep 1.1s linear infinite}
 .skel-bar{display:block;height:10px;border-radius:5px}#hm-summary .skel-bar{width:240px;height:9px}
 @keyframes sweep{from{background-position:200% 0}to{background-position:-200% 0}}
@@ -231,6 +233,7 @@ function formatCost(value){
  return Number.isFinite(value)?'$'+value.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3}):'—';
 }
 function setQuickRange(days){
+ activityDay=null;paintDaySelection();
  const parts=new Intl.DateTimeFormat('en-US',{timeZone:statsZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
  const part=t=>parts.find(p=>p.type===t).value;
  const end=`${part('year')}-${part('month')}-${part('day')}`;
@@ -282,12 +285,12 @@ async function loadStats(page){
  finally{if(request===statsRequest)document.getElementById('stats-table').setAttribute('aria-busy','false');}
 }
 document.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{setQuickRange(Number(b.dataset.days));applyRange();}));
-for(const input of [startInput,endInput])input.addEventListener('input',()=>document.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');}));
+for(const input of [startInput,endInput])input.addEventListener('input',()=>{activityDay=null;paintDaySelection();document.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});});
 document.getElementById('stats-form').addEventListener('submit',e=>{e.preventDefault();applyRange();});
 document.getElementById('page-size').addEventListener('change',e=>{statsSize=Number(e.target.value);loadStats(1);});
 document.getElementById('prev-page').addEventListener('click',()=>loadStats(statsPage-1));
 document.getElementById('next-page').addEventListener('click',()=>loadStats(statsPage+1));
-let activityData=null,activityMetric='tokens',activityUser='',activityRequest=0,activityController=null,activityBusy=false;
+let activityData=null,activityMetric='tokens',activityUser='',activityRequest=0,activityController=null,activityBusy=false,activityDay=null;
 const activitySelect=document.getElementById('activity-user'),hmGrid=document.getElementById('hm-grid'),hmMonths=document.getElementById('hm-months'),hmTip=document.getElementById('hm-tip'),hmWrap=document.getElementById('hm-wrap'),hmScroll=document.getElementById('hm-scroll');
 const WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
 function rankLoading(){
@@ -383,7 +386,11 @@ function renderActivity(){
  }
  document.getElementById('hm-summary').textContent=`近 ${days} 天 · Token ${formatTokens(totalTokens)} · ${formatCost(totalCost)} · 活跃 ${active} 天`;
  hmGrid.setAttribute('aria-label',`近 ${days} 天${activityMetric==='cost'?'费用':' Token'} 活跃热力图，活跃 ${active} 天`);
+ paintDaySelection();
  hmTip.hidden=true;
+}
+function paintDaySelection(){
+ hmGrid.querySelectorAll('.hm-cell[data-date]').forEach(cell=>cell.classList.toggle('selected',cell.dataset.date===activityDay));
 }
 function showActivityTip(cell){
  const row=activityData?.trend.find(entry=>entry.date===cell.dataset.date);
@@ -395,6 +402,7 @@ function showActivityTip(cell){
   `请求 ${(row?.requests??0).toLocaleString('zh-CN')}`,
   `输入 ${formatTokens(row?.input_tokens??0)} · 输出 ${formatTokens(row?.output_tokens??0)}`,
   `缓存 ${formatTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,
+  '点击定位当日排行',
  ];
  hmTip.replaceChildren();
  lines.forEach((text,index)=>{
@@ -414,6 +422,16 @@ function showActivityTip(cell){
 }
 hmGrid.addEventListener('pointerover',e=>{const cell=e.target.closest('.hm-cell[data-date]');if(cell)showActivityTip(cell);});
 hmGrid.addEventListener('pointerout',e=>{if(e.target.closest('.hm-cell[data-date]'))hmTip.hidden=true;});
+hmGrid.addEventListener('click',e=>{
+ const cell=e.target.closest('.hm-cell[data-date]');
+ if(!cell)return;
+ activityDay=cell.dataset.date;
+ paintDaySelection();
+ startInput.value=endInput.value=activityDay;
+ document.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
+ applyRange();
+ document.querySelector('section.breakdown').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+});
 hmScroll.addEventListener('scroll',()=>{hmTip.hidden=true;});
 activitySelect.addEventListener('change',()=>{activityUser=activitySelect.value;loadActivity();});
 document.querySelectorAll('[data-metric]').forEach(button=>button.addEventListener('click',()=>{

@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  if (window[KEY]?.version !== 25) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 31) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -23,7 +23,7 @@ function installQuotaWidget(snapshot, options = {}) {
   // Some renderer contexts deny storage; toggling still works for this session.
   try { collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch {}
   let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
-  let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '', activityBusy = false;
+  let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '', activityBusy = false, activityDay = null;
   const host = document.createElement('div');
   host.id = HOST;
   host.style.cssText = 'display:block;position:absolute;left:10px;right:10px;bottom:14px;min-width:0;width:auto;z-index:2147483000;-webkit-app-region:no-drag;';
@@ -39,8 +39,12 @@ function installQuotaWidget(snapshot, options = {}) {
       .toggle,.refresh,.usage-link,.usage-close,dialog button,.seg button,input,select{transition:transform .28s var(--qbounce),background .2s ease,box-shadow .2s ease,opacity .2s ease,color .2s ease,filter .2s ease}
       .toggle:active,.refresh:active,.usage-close:active,dialog button:active,.seg button:active{transform:scale(.93)}
       @keyframes lg-in{from{opacity:0;transform:scale(.955) translateY(5px)}to{opacity:1;transform:none}}
+      @keyframes dlg-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+      @keyframes dlg-out{to{opacity:0;transform:translateY(10px)}}
+      @keyframes bd-in{from{opacity:0}to{opacity:1}}
+      @keyframes bd-out{to{opacity:0}}
       .actions{display:flex;align-items:center;gap:5px}.usage-link{border:0;background:transparent;color:inherit;font:inherit;font-size:10px;opacity:.65;cursor:pointer;padding:3px}.usage-link:hover{opacity:1;text-decoration:underline}
-      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
+      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column;animation:dlg-in .3s cubic-bezier(.22,.85,.3,1)}dialog[open]::backdrop{animation:bd-in .3s ease-out}dialog.closing{animation:dlg-out .18s ease-in forwards;pointer-events:none}dialog.closing::backdrop{animation:bd-out .18s ease-in forwards}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
       .dialog-head,.activity,.usage-filters,.usage-pages{flex:none}
       .dialog-head,.usage-pages{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.dialog-head{justify-content:space-between}.dialog-head h2{font-size:15px;font-weight:600;margin:0;letter-spacing:-.01em}
       .usage-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--qline);border-radius:9px;background:var(--qseg);color:inherit;cursor:pointer;opacity:.75}.usage-close:hover{opacity:1;background:var(--qtrack)}.usage-close:focus-visible{outline:2px solid var(--qaccent);outline-offset:1px}
@@ -48,7 +52,7 @@ function installQuotaWidget(snapshot, options = {}) {
       .seg{display:inline-flex;gap:3px;background:rgba(15,23,42,.05);border:1px solid var(--qline);border-radius:14px;padding:4px;box-shadow:inset 0 1px 3px rgba(15,23,42,.08)}.seg button{border:0;background:transparent;color:inherit;opacity:.62;font-family:var(--qmono);font-size:11px;padding:6px 13px;border-radius:11px;cursor:pointer}.seg button.active{background:linear-gradient(180deg,#fff,rgba(255,255,255,.72));opacity:1;font-weight:600;box-shadow:0 3px 8px rgba(2,6,23,.14),inset 0 1px 0 #fff}
       .usage-dates{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.usage-dates label{display:flex;align-items:center;gap:6px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
       dialog button,dialog input,dialog select{font:inherit;color:inherit;background:transparent;border:1px solid var(--qline);border-radius:8px;padding:6px 9px}dialog button{cursor:pointer}dialog button:disabled{opacity:.4;cursor:default}
-      .usage-scroll{overflow:auto;flex:1;min-height:140px;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
+      .usage-scroll{overflow:auto;flex:1;min-height:0;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
       .usage-status{font-family:var(--qmono);font-size:10px;color:var(--qmuted);margin:0 0 10px}.usage-error{color:#df8842;font-size:11px;margin:0 0 10px}
       .usage-pages{justify-content:flex-end;margin-top:14px;font-family:var(--qmono);font-size:10px}.usage-pages label{display:flex;align-items:center;gap:6px;color:var(--qmuted)}
       .activity{margin:14px 0 16px;border:1px solid var(--qline);border-radius:16px;padding:14px 16px;background:rgba(255,255,255,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
@@ -62,7 +66,8 @@ function installQuotaWidget(snapshot, options = {}) {
       .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;width:max-content;min-height:102px}
       .hm-cell{width:12px;height:12px;border-radius:3px;background:rgba(15,23,42,.08)}
       .hm-cell[data-level="1"]{background:#c9def2}.hm-cell[data-level="2"]{background:#8fc0e8}.hm-cell[data-level="3"]{background:#4b93cf}.hm-cell[data-level="4"]{background:#1d64a8}
-      .hm-cell.pad{visibility:hidden}.hm-cell[data-date]:hover{outline:1px solid var(--qink);outline-offset:1px}
+      .hm-cell.pad{visibility:hidden}.hm-cell[data-date]{cursor:pointer}.hm-cell[data-date]:hover{outline:1px solid var(--qink);outline-offset:1px}
+      .hm-cell.selected,.hm-cell.selected:hover{outline:2px solid var(--qaccent);outline-offset:1px}
       .hm-cell.skel,.skel-bar{background:linear-gradient(100deg,rgba(15,23,42,.07) 40%,rgba(15,23,42,.17) 50%,rgba(15,23,42,.07) 60%);background-size:200% 100%;animation:q-sweep 1.1s linear infinite}
       .skel-bar{display:block;height:10px;border-radius:5px}.hm-summary .skel-bar{width:230px;height:9px}
       @keyframes q-sweep{from{background-position:200% 0}to{background-position:-200% 0}}
@@ -74,7 +79,7 @@ function installQuotaWidget(snapshot, options = {}) {
       .title{font-family:var(--qmono);font-weight:600;font-size:11px;letter-spacing:.06em}
       .toggle{display:flex;align-items:center;gap:4px;flex:1;min-width:0;border:0;border-radius:4px;padding:3px;margin:-3px;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;white-space:nowrap}
       .toggle:hover{background:var(--qseg)}.toggle:focus-visible{outline:2px solid var(--qaccent);outline-offset:1px}
-      .chevron{flex:none;opacity:.55}.toggle[aria-expanded="false"] .chevron{transform:rotate(-90deg)}
+      .chevron{flex:none;opacity:.55;transition:transform .3s var(--qbounce)}.toggle[aria-expanded="false"] .chevron{transform:rotate(-90deg)}
       .gauge{display:none;flex:none}.toggle[aria-expanded="false"] .gauge{display:block}
       .gauge .gtrack{stroke:var(--qtrack)}.gauge .gfill{stroke:var(--qaccent);transition:stroke-dashoffset .35s ease}.stale .gauge .gfill{opacity:.45}.gauge .gem{fill:var(--qmuted);opacity:.6}
       .stale .toggle .title::after{content:'●';font-size:7px;color:#df8842;margin-left:4px}
@@ -119,18 +124,47 @@ function installQuotaWidget(snapshot, options = {}) {
     <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
     <div class="usage-pages"><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
+  const details = root.getElementById('quota-details');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   function paintCollapse() {
-    root.getElementById('quota-details').hidden = collapsed;
     toggle.setAttribute('aria-expanded', String(!collapsed));
     toggle.setAttribute('aria-label', collapsed ? '展开额度详情' : '收起额度详情');
+  }
+  let collapseTimer = 0;
+  function finishCollapse() {
+    clearTimeout(collapseTimer); collapseTimer = 0;
+    details.removeEventListener('transitionend', collapseEnd);
+    details.style.transition = ''; details.style.height = ''; details.style.opacity = ''; details.style.overflow = '';
+    details.hidden = collapsed;
+  }
+  const collapseEnd = e => { if (e.target === details && e.propertyName === 'height') finishCollapse(); };
+  function paintCollapseAnimated() {
+    paintCollapse();
+    if (reduceMotion.matches) { finishCollapse(); return; }
+    const from = details.hidden ? 0 : details.getBoundingClientRect().height;
+    if (collapseTimer) { clearTimeout(collapseTimer); details.removeEventListener('transitionend', collapseEnd); }
+    details.style.transition = ''; details.style.height = ''; details.style.opacity = '';
+    details.hidden = false;
+    const to = collapsed ? 0 : details.getBoundingClientRect().height;
+    if (Math.abs(to - from) < 1) { finishCollapse(); return; }
+    details.style.overflow = 'hidden';
+    details.style.height = from + 'px';
+    details.style.opacity = collapsed ? '1' : '0';
+    void details.offsetHeight;
+    details.style.transition = 'height .34s cubic-bezier(.22,.85,.3,1),opacity .28s ease';
+    details.style.height = to + 'px';
+    details.style.opacity = collapsed ? '0' : '1';
+    details.addEventListener('transitionend', collapseEnd);
+    collapseTimer = setTimeout(finishCollapse, 420);
   }
   toggle.addEventListener('click', () => {
     collapsed = !collapsed;
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch {}
-    paintCollapse();
+    paintCollapseAnimated();
     paint();
   });
   paintCollapse();
+  details.hidden = collapsed;
   const formatPercent = n => `${Number(n.toFixed(1))}%`;
   const formatDate = value => new Date(value).toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai', hour12: false,
@@ -202,10 +236,53 @@ function installQuotaWidget(snapshot, options = {}) {
     foot.style.opacity = paused ? '.6' : '';
   }
   const dialog = root.querySelector('dialog');
+  // Content swaps (skeleton, results, errors) change the auto height; glide between
+  // the settled heights instead of jumping, then hand control back to max-height.
+  // While a query is in flight the height is held so the taller skeleton never
+  // stretches the dialog before the real rows shrink it back.
+  let lastDialogH = 0, dialogAnimating = false, dialogHeld = false, dialogFinish = null;
+  function holdDialog() {
+    if (!dialog.open || reduceMotion.matches) return;
+    dialogFinish?.();
+    const h = dialog.getBoundingClientRect().height;
+    dialogHeld = true;
+    dialog.style.height = h + 'px';
+    lastDialogH = h;
+  }
+  function releaseDialog() {
+    // Wait for every in-flight query so the skeleton of a pending activity
+    // request cannot stretch the dialog after the ranking already settled.
+    if (!dialogHeld || usageDeadline || activityDeadline) return;
+    dialogHeld = false;
+    dialog.style.height = '';
+  }
+  const dialogRO = new ResizeObserver(() => {
+    const h = dialog.getBoundingClientRect().height;
+    if (!dialog.open) { lastDialogH = 0; return; }
+    if (dialogAnimating || dialogHeld) return;
+    if (!lastDialogH || reduceMotion.matches || Math.abs(h - lastDialogH) < 1) { lastDialogH = h; return; }
+    const from = lastDialogH; lastDialogH = h; dialogAnimating = true;
+    dialog.style.overflow = 'hidden';
+    dialog.style.height = from + 'px';
+    void dialog.offsetHeight;
+    dialog.style.transition = 'height .34s cubic-bezier(.22,.85,.3,1)';
+    dialog.style.height = h + 'px';
+    const finish = () => {
+      clearTimeout(timer); dialog.removeEventListener('transitionend', onEnd);
+      dialog.style.transition = ''; dialog.style.height = ''; dialog.style.overflow = '';
+      dialogAnimating = false; dialogFinish = null;
+    };
+    const onEnd = e => { if (e.target === dialog && e.propertyName === 'height') finish(); };
+    const timer = setTimeout(finish, 420);
+    dialogFinish = finish;
+    dialog.addEventListener('transitionend', onEnd);
+  });
+  dialogRO.observe(dialog);
   const usageStatus = root.querySelector('.rank-status');
   const usageError = root.querySelector('.rank-error');
   const startInput = root.querySelector('.usage-start'), endInput = root.querySelector('.usage-end');
   function quickRange(days) {
+    activityDay=null;paintDaySelection();
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).formatToParts(new Date()).map(p => [p.type,p.value]));
     endInput.value = `${parts.year}-${parts.month}-${parts.day}`;
     const start = new Date(endInput.value+'T00:00:00Z'); start.setUTCDate(start.getUTCDate()-days+1); startInput.value=start.toISOString().slice(0,10);
@@ -217,6 +294,7 @@ function installQuotaWidget(snapshot, options = {}) {
       usageRange={start_date:startInput.value,end_date:endInput.value};
     }
     usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value)};
+    holdDialog();
     dispatch({kind:'usage',...usageRequest});
     usageDeadline=Date.now()+30000;
     usageError.hidden=true;usageStatus.hidden=false;usageStatus.textContent='正在查询…';rankLoading();
@@ -225,6 +303,7 @@ function installQuotaWidget(snapshot, options = {}) {
   function receiveUsage(result) {
     if(result.id!==usageId || !dialog.open)return;
     usageDeadline=0;
+    releaseDialog();
     if(result.error) {usageStatus.hidden=false;usageStatus.textContent='查询失败，请点击查询重试。';usageError.textContent=result.error;usageError.hidden=false;root.querySelector('tbody').replaceChildren();return;}
     const data=result.data;usagePage=data.page;
     root.querySelector('tbody').replaceChildren();
@@ -275,6 +354,7 @@ function installQuotaWidget(snapshot, options = {}) {
   }
   function queryActivity() {
     activityRequest={id:++activityId,user:activityUser||null};
+    holdDialog();
     dispatch({kind:'activity',...activityRequest});
     activityDeadline=Date.now()+30000;
     activityError.hidden=true;activityStatus.hidden=false;activityStatus.textContent='正在加载近 365 天用量…';
@@ -283,6 +363,7 @@ function installQuotaWidget(snapshot, options = {}) {
   function receiveActivity(result) {
     if(result.id!==activityId || !dialog.open)return;
     activityDeadline=0;
+    releaseDialog();
     if(result.error){activityBusy=false;activityStatus.hidden=false;activityStatus.textContent='加载失败，请重新打开重试。';activityError.textContent=result.error;activityError.hidden=false;hmGrid.replaceChildren();hmGrid.setAttribute('aria-busy','false');hmMonths.replaceChildren();hmSummary.replaceChildren();hmTip.hidden=true;return;}
     activityError.hidden=true;activityBusy=false;
     activityData=result.data;
@@ -334,7 +415,11 @@ function installQuotaWidget(snapshot, options = {}) {
     }
     hmSummary.textContent=`近 ${days} 天 · Token ${fmtTokens(totalTokens)} · ${fmtCost(totalCost)} · 活跃 ${active} 天`;
     hmGrid.setAttribute('aria-label',`近 ${days} 天${activityMetric==='cost'?'费用':' Token'} 活跃热力图，活跃 ${active} 天`);
+    paintDaySelection();
     hmTip.hidden=true;
+  }
+  function paintDaySelection() {
+    hmGrid.querySelectorAll('.hm-cell[data-date]').forEach(cell=>cell.classList.toggle('selected',cell.dataset.date===activityDay));
   }
   function showActivityTip(cell) {
     const row=activityData?.trend.find(entry=>entry.date===cell.dataset.date);
@@ -346,6 +431,7 @@ function installQuotaWidget(snapshot, options = {}) {
       `请求 ${(row?.requests??0).toLocaleString('en-US')}`,
       `输入 ${fmtTokens(row?.input_tokens??0)} · 输出 ${fmtTokens(row?.output_tokens??0)}`,
       `缓存 ${fmtTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,
+      '点击定位当日排行',
     ];
     hmTip.replaceChildren();
     lines.forEach((text,index)=>{
@@ -365,6 +451,17 @@ function installQuotaWidget(snapshot, options = {}) {
   }
   hmGrid.addEventListener('pointerover',e=>{const cell=e.target.closest('.hm-cell[data-date]');if(cell)showActivityTip(cell);});
   hmGrid.addEventListener('pointerout',e=>{if(e.target.closest('.hm-cell[data-date]'))hmTip.hidden=true;});
+  hmGrid.addEventListener('click',e=>{
+    const cell=e.target.closest('.hm-cell[data-date]');
+    if(!cell)return;
+    activityDay=cell.dataset.date;
+    paintDaySelection();
+    startInput.value=endInput.value=activityDay;
+    root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
+    queryUsage(1,true);
+    const filters=root.querySelector('.usage-filters');
+    dialog.scrollTo({top:Math.max(0,filters.offsetTop-14),behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  });
   hmScroll.addEventListener('scroll',()=>{hmTip.hidden=true;});
   activitySelect.addEventListener('change',()=>{activityUser=activitySelect.value;queryActivity();});
   root.querySelectorAll('[data-metric]').forEach(button=>button.addEventListener('click',()=>{
@@ -372,13 +469,34 @@ function installQuotaWidget(snapshot, options = {}) {
     root.querySelectorAll('[data-metric]').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
     renderActivity();
   }));
-  root.querySelector('.usage-link').addEventListener('click',()=>{dialog.showModal();quickRange(1);queryUsage(1,true);queryActivity();});
-  root.querySelector('.usage-close').addEventListener('click',()=>dialog.close());
-  dialog.addEventListener('close',()=>{usageId++;usageRequest=null;usageDeadline=0;activityId++;activityRequest=null;activityDeadline=0;hmTip.hidden=true;});
-  dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
+  let dialogClosing = 0;
+  function closeDialog() {
+    if (!dialog.open || dialogClosing) return;
+    if (reduceMotion.matches) { dialog.close(); return; }
+    dialog.classList.add('closing');
+    const done = () => {
+      clearTimeout(dialogClosing); dialogClosing = 0;
+      dialog.removeEventListener('animationend', onEnd);
+      dialog.classList.remove('closing');
+      dialog.close();
+    };
+    const onEnd = e => { if (e.target === dialog && e.animationName === 'dlg-out') done(); };
+    dialog.addEventListener('animationend', onEnd);
+    dialogClosing = setTimeout(done, 260);
+  }
+  function openDialog() {
+    if (dialogClosing) { clearTimeout(dialogClosing); dialogClosing = 0; dialog.classList.remove('closing'); }
+    if (!dialog.open) dialog.showModal();
+    quickRange(1); queryUsage(1, true); queryActivity();
+  }
+  root.querySelector('.usage-link').addEventListener('click', openDialog);
+  root.querySelector('.usage-close').addEventListener('click', closeDialog);
+  dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(); });
+  dialog.addEventListener('close',()=>{usageId++;usageRequest=null;usageDeadline=0;activityId++;activityRequest=null;activityDeadline=0;activityDay=null;hmTip.hidden=true;dialogFinish?.();releaseDialog();dialog.classList.remove('closing');clearTimeout(dialogClosing);dialogClosing=0;});
+  dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDialog();}});
   root.querySelector('.usage-filters').addEventListener('submit',e=>{e.preventDefault();queryUsage(1,true);});
   root.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{quickRange(Number(b.dataset.days));queryUsage(1,true);}));
-  for(const input of [startInput,endInput]) input.addEventListener('input',()=>root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');}));
+  for(const input of [startInput,endInput]) input.addEventListener('input',()=>{activityDay=null;paintDaySelection();root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});});
   root.querySelector('.usage-size').addEventListener('change',()=>queryUsage(1));
   root.querySelector('.usage-prev').addEventListener('click',()=>queryUsage(usagePage-1));
   root.querySelector('.usage-next').addEventListener('click',()=>queryUsage(usagePage+1));
@@ -440,7 +558,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 25,
+    version: 31,
     update(value) {
       // An immediate push and the periodic tick can race; never regress to older data.
       if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();
@@ -451,7 +569,7 @@ function installQuotaWidget(snapshot, options = {}) {
     receiveActivity,
     takeActivityRequest() {const request=activityRequest;activityRequest=null;return request;},
     takeRefreshRequest() { const requested = refreshRequested; refreshRequested = false; return requested; },
-    dispose() { disposed = true; observer.disconnect(); clearInterval(timer); dialog.close(); host.remove(); if (positioned) positioned.style.position = ''; delete window[KEY]; },
+    dispose() { disposed = true; observer.disconnect(); dialogRO.disconnect(); clearTimeout(collapseTimer); clearInterval(timer); dialog.close(); host.remove(); if (positioned) positioned.style.position = ''; delete window[KEY]; },
   };
   mount(); paint();
   return status();
