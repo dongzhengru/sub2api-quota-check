@@ -236,7 +236,7 @@ try {
     if(!dashboardReady)await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.ok(dashboardReady,'Dashboard renders reset-card summary');
-  assert.match(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),/^\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.match(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),/^(最近到期 )?\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal((await cdp.evaluate(`document.getElementById('reset-card-expiry').title`)).split('\n').length,3);
   assert.equal(await cdp.evaluate(`document.getElementById('credit-balance').textContent`),'12.346');
   const dashboardShot=await cdp.call('Page.captureScreenshot',{format:'png'});
