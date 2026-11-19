@@ -126,6 +126,7 @@ try {
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /17.41 M/);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$4.576/);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /92\.8%/);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
   await cdp.evaluate(`${ui}.querySelector('.usage-next').click()`);
   query=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);assert.equal(query.page,2);

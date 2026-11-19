@@ -115,7 +115,7 @@ tbody tr:hover{background:var(--seg)}
 <form id="stats-form" class="dates"><label>开始日期 <input type="date" id="start-date" required></label><label>结束日期 <input type="date" id="end-date" required></label><button type="submit">查询</button></form>
 <p id="stats-error" class="error" role="alert" hidden></p>
 <p id="stats-status" class="status" role="status" aria-live="polite">等待查询</p>
-<div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col">总 Token ↓</th><th scope="col" title="cost">费用 ($)</th></tr></thead><tbody id="stats-body"></tbody></table></div>
+<div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col" title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th scope="col">总 Token ↓</th><th scope="col" title="cost">费用 ($)</th></tr></thead><tbody id="stats-body"></tbody></table></div>
 <div class="pagination"><label>每页 <select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" id="prev-page" disabled>上一页</button><span id="page-label">第 1 页</span><button type="button" id="next-page" disabled>下一页</button></div>
 </section>
 </main>
@@ -219,9 +219,11 @@ async function loadStats(page){
   for(const user of data.users){
    const row=document.createElement('tr'),identity=document.createElement('td'),id=document.createElement('small');
    identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;identity.append(id);row.append(identity);
-   for(const key of ['requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']){
+   const prompt=user.input_tokens+user.cache_tokens;
+   user.cache_hit_rate=Number.isFinite(user.input_tokens)&&Number.isFinite(user.cache_tokens)&&prompt>0?user.cache_tokens/prompt*100:null;
+   for(const key of ['requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','cost']){
     const cell=document.createElement('td'),value=user[key];
-    cell.textContent=key.endsWith('tokens')?formatTokens(value):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):formatCost(value);
+    cell.textContent=key==='cache_hit_rate'?(Number.isFinite(value)?value.toFixed(1)+'%':'—'):key.endsWith('tokens')?formatTokens(value):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):formatCost(value);
     if(Number.isFinite(value))cell.title=value.toLocaleString('en-US',{maximumFractionDigits:20});
     row.append(cell);
    }

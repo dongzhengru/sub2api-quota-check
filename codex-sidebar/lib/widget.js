@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 17) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 18) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -88,7 +88,7 @@ function installQuotaWidget(snapshot, options = {}) {
     <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
     <form class="usage-filters"><div class="seg" role="group" aria-label="快捷日期"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button></div><div class="usage-dates"><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></div></form>
     <p class="usage-status" role="status" aria-live="polite"></p><p class="usage-error" role="alert" hidden></p>
-    <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
+    <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
     <div class="usage-pages"><label>每页 <select><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
   function paintCollapse() {
@@ -199,11 +199,13 @@ function installQuotaWidget(snapshot, options = {}) {
     const data=result.data;usagePage=data.page;
     for(const user of data.users) {
       const row=document.createElement('tr');
-      for(const key of ['email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']) {
+      const prompt=user.input_tokens+user.cache_tokens;
+      user.cache_hit_rate=Number.isFinite(user.input_tokens)&&Number.isFinite(user.cache_tokens)&&prompt>0?user.cache_tokens/prompt*100:null;
+      for(const key of ['email','requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','cost']) {
         const cell=document.createElement('td'),n=user[key];
         if(key==='email')cell.textContent=n || `用户 ${user.user_id}`;
         else if(!Number.isFinite(n))cell.textContent='—';
-        else {cell.title=String(n);cell.textContent=key==='cost'?'$'+n.toFixed(3):key.endsWith('tokens')?(Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US')):n.toLocaleString('en-US');}
+        else {cell.title=String(n);cell.textContent=key==='cost'?'$'+n.toFixed(3):key==='cache_hit_rate'?n.toFixed(1)+'%':key.endsWith('tokens')?(Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US')):n.toLocaleString('en-US');}
         if(key==='total_tokens')cell.className='strong';
         row.append(cell);
       }
@@ -280,7 +282,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 17,
+    version: 18,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},
