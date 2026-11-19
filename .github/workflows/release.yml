@@ -11,8 +11,6 @@ jobs:
   release:
     name: 测试、构建并发布客户端
     runs-on: macos-15
-    env:
-      CODEX_QUOTA_BUILD_DIR: ${{ runner.temp }}/quota-build
     steps:
       - name: 检出源代码
         uses: actions/checkout@v4
@@ -30,9 +28,13 @@ jobs:
         run: node --test codex-sidebar/test/*.test.mjs
 
       - name: 构建 macOS 菜单栏助手
+        env:
+          CODEX_QUOTA_BUILD_DIR: ${{ runner.temp }}/quota-build
         run: bash codex-sidebar/macos/build.sh
 
       - name: 打包产物
+        env:
+          CODEX_QUOTA_BUILD_DIR: ${{ runner.temp }}/quota-build
         run: |
           mkdir dist
           ditto -c -k --sequesterRsrc --keepParent \
