@@ -72,13 +72,13 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
   const targetsForPort = dependencies.targets || listTargets;
   const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
+  const inject = (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector }) }) }`);
   const sessions = new Map();
   let previousError = '';
   let nextUsage = Promise.resolve();
   try {
     while (!signal.aborted) {
       try {
-        await verify(port);
         const targets = (await targetsForPort(port)).filter(isAppTarget);
         if (!targets.length) throw new Error('CDP 已连接，等待 Codex 主界面');
         // Poll in parallel with UI maintenance, so slow requests don't delay mounting.
@@ -87,11 +87,15 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
         for (const [id, client] of sessions) {
           if (!alive.has(id) || client.closed) { client.close(); sessions.delete(id); }
         }
+        let verified = false;
         for (const target of targets) {
           let client = sessions.get(target.id);
           let fresh = false;
           try {
             if (!client) {
+              // Live sessions keep the trust chain established at connect time;
+              // re-verify the listener only when a new connection is made.
+              if (!verified) { await verify(port); verified = true; }
               client = await connect(target.webSocketDebuggerUrl, port);
               sessions.set(target.id, client);
               fresh = true;
@@ -110,10 +114,13 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
                 data => ({id:request.id,data}), error => ({id:request.id,error:error.message || 'Token Activity 查询失败'})
               ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveActivity?.(${JSON.stringify(result)})`)).catch(() => {});
             }
-            if (state?.refresh) nextUsage = poller.refresh({ force: true });
+            if (state?.refresh) {
+              nextUsage = poller.refresh({ force: true });
+              // Push the finished snapshot right away; waiting for the next tick adds seconds of latency.
+              void nextUsage.then(snapshot => Promise.allSettled([...sessions.values()].map(session => inject(session, snapshot)))).catch(() => {});
+            }
             if (state) {
-              const snapshot = JSON.stringify(poller.snapshot);
-              const result = await client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${snapshot}, ${JSON.stringify({ selector })}) }`);
+              const result = await inject(client, poller.snapshot);
               if (fresh) log(result?.mounted ? '额度卡片已挂载' : '已连接界面，等待侧栏出现');
             }
           } catch (error) {

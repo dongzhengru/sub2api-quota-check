@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 21) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 22) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -433,8 +433,12 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 21,
-    update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
+    version: 22,
+    update(value) {
+      // An immediate push and the periodic tick can race; never regress to older data.
+      if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();
+      current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status();
+    }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},
     receiveActivity,

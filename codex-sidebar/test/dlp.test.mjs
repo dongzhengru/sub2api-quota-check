@@ -59,6 +59,75 @@ test('both endpoints keep separate sessions for matching page IDs and clean up o
 });
 
 
+test('listener verification runs only for new connections, not on every tick', { timeout: 10000 }, async t => {
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  let verifyCalls = 0, connects = 0, injections = 0;
+  let firstClient;
+  const poller = { snapshot: {}, refresh: async () => {} };
+  await runDaemon({
+    port: 9341, poller, signal: controller.signal, log: () => {},
+    dependencies: {
+      verify: async () => { verifyCalls++; },
+      targets: async () => [{ id: 'p1', type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' }],
+      connect: async () => {
+        connects++;
+        const client = {
+          closed: false,
+          evaluate: async expression => {
+            if (expression.includes('refresh: window.')) return { installed: true };
+            if (expression.includes('?.dispose(); true')) return true;
+            injections++;
+            if (injections === 2) firstClient.closed = true;
+            if (injections === 3) controller.abort();
+            return { mounted: true };
+          },
+          close: () => { client.closed = true; },
+        };
+        if (connects === 1) firstClient = client;
+        return client;
+      },
+    },
+  });
+  assert.equal(injections, 3);
+  assert.equal(connects, 2, 'steady ticks reuse the live session');
+  assert.equal(verifyCalls, 2, 'verification runs once per new connection, not per tick');
+});
+
+test('forced refresh broadcasts the finished snapshot to every session before the next tick', { timeout: 5000 }, async t => {
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const fresh = { data: { marker: 'fresh' }, receivedAt: 2, loading: false };
+  const poller = {
+    snapshot: { data: null, receivedAt: 1, loading: true },
+    refresh: ({ force } = {}) => force
+      ? gate.then(() => { poller.snapshot = fresh; return fresh; })
+      : Promise.resolve(poller.snapshot),
+  };
+  let stateProbes = 0, loadingSeen = 0, freshSeen = 0;
+  await runDaemon({
+    port: 9341, poller, signal: controller.signal, log: () => {},
+    dependencies: {
+      verify: async () => {},
+      targets: async () => ['p1', 'p2'].map(id => ({ id, type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' })),
+      connect: async () => ({
+        evaluate: async expression => {
+          if (expression.includes('refresh: window.')) { stateProbes++; return { refresh: stateProbes === 1 }; }
+          if (expression.includes('?.dispose(); true')) return true;
+          if (expression.includes('"marker":"fresh"')) { freshSeen++; if (freshSeen === 2) controller.abort(); }
+          else if (++loadingSeen === 2) release();
+          return { mounted: true };
+        },
+        close: () => {},
+      }),
+    },
+  });
+  assert.equal(freshSeen, 2, 'both windows receive the pushed snapshot');
+  assert.equal(stateProbes, 2, 'fresh data arrives before the next polling tick');
+});
+
 test('existing DLP helper is recognized using full UTF-8 process paths', async () => {
   const bundle = '/Applications/Codex 额度助手.app';
   const executable = path.join(bundle, 'Contents/MacOS/CodexQuota');

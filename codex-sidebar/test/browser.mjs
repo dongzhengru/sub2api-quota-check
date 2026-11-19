@@ -111,6 +111,8 @@ try {
   await inject({ ...snapshot, data: { ...snapshot.data, five_hour: { ...snapshot.data.five_hour, remaining_percent: 69 } } });
   assert.equal(await cdp.evaluate(`${ui}.querySelector('#quota-details').hidden`), true, 'Polling does not reopen the card');
   assert.equal(await cdp.evaluate(`${ui}.querySelector('b').textContent`), '69%', 'Collapsed quota still updates');
+  await inject({ ...snapshot, receivedAt: now - 1000, data: { ...snapshot.data, five_hour: { ...snapshot.data.five_hour, remaining_percent: 50 } } });
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('b').textContent`), '69%', 'A stale push never regresses newer data');
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
   await inject(snapshot);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('#quota-details').hidden`), true, 'Reinstall remembers collapse');
