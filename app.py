@@ -4,8 +4,9 @@ import math
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
@@ -16,6 +17,11 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
 CACHE_SECONDS = 60
+USERS_CACHE_SECONDS = 300
+ACTIVITY_DAYS = 365
+EXCLUDED_USER_EMAILS = {'system-check@sub2api.com'}
+TREND_FIELDS = ('requests', 'input_tokens', 'output_tokens', 'cache_creation_tokens',
+                'cache_read_tokens', 'total_tokens', 'cost', 'actual_cost')
 
 
 class UsageService:
@@ -32,6 +38,127 @@ class UsageService:
         self.fetched_at = None
         self.lock = asyncio.Lock()
         self.breakdown_lock = asyncio.Lock()
+        self.users_lock = asyncio.Lock()
+        self.users_cached = None
+        self.users_deadline = 0.0
+        self.activity_lock = asyncio.Lock()
+        self.activity_cache = {}
+
+    async def directory(self):
+        if self.users_cached is not None and time.monotonic() < self.users_deadline:
+            return self.users_cached
+        async with self.users_lock:
+            if self.users_cached is not None and time.monotonic() < self.users_deadline:
+                return self.users_cached
+            try:
+                if not self.token or time.monotonic() >= self.token_deadline:
+                    await self.login()
+                users, page = [], 1
+                while True:
+                    for attempt in range(2):
+                        response = await self.client.get(
+                            '/api/v1/admin/users',
+                            params={'page': page, 'page_size': 100, 'include_subscriptions': 'false',
+                                    'sort_by': 'created_at', 'sort_order': 'desc', 'timezone': self.tz},
+                            headers={'Authorization': 'Bearer ' + self.token},
+                        )
+                        if response.status_code == 401 and attempt == 0:
+                            await self.login()
+                            continue
+                        break
+                    data = self.unpack(response, stage='用户列表查询')
+                    items = data.get('items')
+                    if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                        raise HTTPException(502, '上游返回的用户列表无效。')
+                    for item in items:
+                        email = item.get('email')
+                        if (isinstance(email, str) and email and email.lower() not in EXCLUDED_USER_EMAILS
+                                and isinstance(item.get('id'), int)):
+                            username = item.get('username')
+                            users.append({'id': item['id'], 'email': email,
+                                          'username': username if isinstance(username, str) else ''})
+                    pages = data.get('pages')
+                    if not items or not isinstance(pages, int) or page >= pages or page >= 50:
+                        break
+                    page += 1
+                self.users_cached = users
+                self.users_deadline = time.monotonic() + USERS_CACHE_SECONDS
+                return users
+            except httpx.TimeoutException:
+                raise HTTPException(504, '上游查询超时，请稍后重试。')
+            except httpx.RequestError:
+                raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
+
+    async def fetch_activity_trend(self, start, end, user_id):
+        try:
+            if not self.token or time.monotonic() >= self.token_deadline:
+                await self.login()
+            params = {'start_date': start.isoformat(), 'end_date': end.isoformat(), 'granularity': 'day',
+                      'include_trend': 'true', 'include_model_stats': 'false',
+                      'include_group_stats': 'false', 'timezone': self.tz}
+            if user_id is not None:
+                params['user_id'] = user_id
+            for attempt in range(2):
+                response = await self.client.get(
+                    '/api/v1/admin/dashboard/snapshot-v2', params=params,
+                    headers={'Authorization': 'Bearer ' + self.token},
+                )
+                if response.status_code == 401 and attempt == 0:
+                    await self.login()
+                    continue
+                data = self.unpack(response, stage='Token Activity 查询')
+                rows = data.get('trend')
+                if not isinstance(rows, list) or len(rows) > ACTIVITY_DAYS:
+                    raise HTTPException(502, '上游返回的 Token Activity 数据无效。')
+                trend = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        raise HTTPException(502, '上游返回的 Token Activity 数据无效。')
+                    try:
+                        day = date.fromisoformat(row.get('date'))
+                    except (TypeError, ValueError):
+                        raise HTTPException(502, '上游返回的 Token Activity 日期无效。')
+                    if not start <= day <= end:
+                        raise HTTPException(502, '上游返回的 Token Activity 日期超出范围。')
+                    entry = {'date': day.isoformat()}
+                    for field in TREND_FIELDS:
+                        value = row.get(field)
+                        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                                or not math.isfinite(value) or value < 0):
+                            raise HTTPException(502, '上游返回的 Token Activity 数据无效。')
+                        entry[field] = value
+                    trend.append(entry)
+                trend.sort(key=lambda entry: entry['date'])
+                return trend
+        except httpx.TimeoutException:
+            raise HTTPException(504, '上游查询超时，请稍后重试。')
+        except httpx.RequestError:
+            raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
+
+    async def token_activity(self, user=None):
+        end = datetime.now(ZoneInfo(self.tz)).date()
+        start = end - timedelta(days=ACTIVITY_DAYS - 1)
+        users = await self.directory()
+        user_id = None
+        if user:
+            match = next((entry for entry in users if entry['email'] == user), None)
+            if match is None:
+                raise HTTPException(404, '未找到该用户，请刷新用户列表后重试。')
+            user_id = match['id']
+        key = (start, end, user or '')
+        async with self.activity_lock:
+            hit = self.activity_cache.get(key)
+            if hit and time.monotonic() < hit[0]:
+                trend = hit[1]
+            else:
+                trend = await self.fetch_activity_trend(start, end, user_id)
+                now = time.monotonic()
+                self.activity_cache = {k: v for k, v in self.activity_cache.items() if now < v[0]}
+                self.activity_cache[key] = (now + CACHE_SECONDS, trend)
+        return {'start_date': start.isoformat(), 'end_date': end.isoformat(), 'timezone': self.tz,
+                'user': user or None,
+                'users': [{'email': entry['email'], 'username': entry['username']} for entry in users],
+                'trend': copy.deepcopy(trend)}
 
     async def user_breakdown(self, start_date, end_date, page, page_size):
         if start_date > end_date:
@@ -258,3 +385,9 @@ async def user_breakdown(start_date: date, end_date: date,
     from fastapi.responses import JSONResponse
     return JSONResponse(await app.state.usage.user_breakdown(start_date, end_date, page, page_size),
                         headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/token-activity')
+async def token_activity(user: str | None = Query(None, min_length=1, max_length=254)):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(await app.state.usage.token_activity(user), headers={'Cache-Control': 'no-store'})

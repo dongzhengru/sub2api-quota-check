@@ -21,12 +21,21 @@ const profile = await mkdtemp(path.join(tmpdir(), 'codex-quota-browser-'));
 // Give the isolated page an origin so collapse persistence uses real storage.
 let dashboardUsage;
 let dashboardStatus = 200;
+const isoDay = d => d.toISOString().slice(0,10);
+const activityEnd = new Date(), activityStart = new Date(activityEnd.getTime() - 364*86400000);
+const activityRow = (date,total,cost) => ({date,requests:10,input_tokens:100,output_tokens:50,cache_creation_tokens:0,cache_read_tokens:1000,total_tokens:total,cost,actual_cost:cost});
+const dashboardActivity = { start_date:isoDay(activityStart), end_date:isoDay(activityEnd), timezone:'Asia/Shanghai', user:null,
+  users:[{email:'dzr@sub2api.com',username:'董政儒'},{email:'zzy@sub2api.com',username:''}],
+  trend:[activityRow(isoDay(activityEnd),50000000,12.5),activityRow(isoDay(new Date(activityEnd.getTime()-86400000)),1000000,0.4),activityRow(isoDay(new Date(activityEnd.getTime()-2*86400000)),100000,0.05),activityRow(isoDay(new Date(activityEnd.getTime()-3*86400000)),10000,0.001)] };
 const dashboardHtml = await readFile(new URL('../../static/index.html', import.meta.url),'utf8');
 const server = createServer((request, response) => {
   if(request.url.startsWith('/api/')) {
     if (request.url.startsWith('/api/usage')) response.statusCode = dashboardStatus;
     response.setHeader('Content-Type','application/json');
-    response.end(JSON.stringify(request.url.startsWith('/api/usage') ? dashboardUsage : request.url.startsWith('/api/config') ? {timezone:'Asia/Shanghai'} : {start_date:'2026-11-10',end_date:'2026-11-10',timezone:'Asia/Shanghai',users:[],page:1,page_size:20,has_more:false}));
+    if (request.url.startsWith('/api/usage')) response.end(JSON.stringify(dashboardUsage));
+    else if (request.url.startsWith('/api/config')) response.end(JSON.stringify({timezone:'Asia/Shanghai'}));
+    else if (request.url.startsWith('/api/token-activity')) response.end(JSON.stringify({...dashboardActivity,user:new URL(request.url,'http://localhost').searchParams.get('user')||null}));
+    else response.end(JSON.stringify({start_date:'2026-11-10',end_date:'2026-11-10',timezone:'Asia/Shanghai',users:[],page:1,page_size:20,has_more:false}));
   } else { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(request.url==='/dashboard' ? dashboardHtml : '<!doctype html><html><body></body></html>'); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -128,6 +137,35 @@ try {
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$4.576/);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /92\.8%/);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
+  // Token Activity: 365-day heatmap with user filter and Tokens/Cost toggle.
+  let activityQuery = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`);
+  assert.equal(activityQuery.user,null);
+  const activityResult = {id:activityQuery.id,data:{...dashboardActivity,users:[{email:'dzr@sub2api.com',username:'<img src=x onerror=alert(1)>'},{email:'zzy@sub2api.com',username:''}]}};
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify(activityResult)})`);
+  const cellCount = await cdp.evaluate(`${ui}.querySelectorAll('.hm-grid .hm-cell').length`);
+  assert.ok(cellCount>=365 && cellCount<=371 && cellCount%7===0, `Heatmap cell count: ${cellCount}`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]')!==null`),true);
+  assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('.hm-months span').length>=12`),true);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-summary').textContent`),/活跃 4 天/);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity img')===null`),true);
+  await cdp.evaluate(`${ui}.querySelector('[data-metric="cost"]').click()`);
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`),null,'Metric toggle re-renders without refetching');
+  assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-summary').textContent`),/\$12\.951/);
+  await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}))`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-tip').hidden`),false);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-tip').textContent`),/50 M/);
+  await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]').dispatchEvent(new PointerEvent('pointerout',{bubbles:true}))`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-tip').hidden`),true);
+  await cdp.evaluate(`${ui}.querySelector('.activity-user').value='dzr@sub2api.com';${ui}.querySelector('.activity-user').dispatchEvent(new Event('change'))`);
+  activityQuery = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`);
+  assert.equal(activityQuery.user,'dzr@sub2api.com');
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify(activityResult)})`);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('.activity-status').textContent`),/正在加载/,'Late activity results do not overwrite the newest filter');
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify({id:activityQuery.id,error:'模拟活动查询失败'})})`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-error').textContent`),'模拟活动查询失败');
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify({...activityResult,id:activityQuery.id,data:{...activityResult.data,user:'dzr@sub2api.com'}})})`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-error').hidden`),true);
+  await cdp.evaluate(`${ui}.querySelector('[data-metric="tokens"]').click()`);
   await cdp.evaluate(`${ui}.querySelector('.usage-next').click()`);
   query=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);assert.equal(query.page,2);
   await cdp.evaluate(`${ui}.querySelector('[data-days="7"]').click()`);
@@ -237,6 +275,26 @@ try {
     if(!dashboardReady)await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.ok(dashboardReady,'Dashboard renders reset-card summary');
+  let activityReady=false;
+  for(let i=0;i<60&&!activityReady;i++){
+    activityReady=await cdp.evaluate(`document.querySelectorAll('#hm-grid .hm-cell').length>=365`);
+    if(!activityReady)await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.ok(activityReady,'Dashboard renders the Token Activity heatmap');
+  assert.match(await cdp.evaluate(`document.getElementById('hm-summary').textContent`),/近 365 天/);
+  assert.equal(await cdp.evaluate(`document.getElementById('activity-user').options.length`),3);
+  assert.equal(await cdp.evaluate(`document.querySelector('#hm-grid .hm-cell[data-level="4"]')!==null`),true);
+  await cdp.evaluate(`document.querySelector('[data-metric="cost"]').click()`);
+  assert.match(await cdp.evaluate(`document.getElementById('hm-grid').getAttribute('aria-label')`),/费用/);
+  await cdp.evaluate(`document.querySelector('[data-metric="tokens"]').click()`);
+  await cdp.evaluate(`document.getElementById('activity-user').value='dzr@sub2api.com';document.getElementById('activity-user').dispatchEvent(new Event('change'))`);
+  let dashboardUserReady=false;
+  for(let i=0;i<60&&!dashboardUserReady;i++){
+    dashboardUserReady=await cdp.evaluate(`document.getElementById('activity-status').textContent.includes('dzr@sub2api.com')`);
+    if(!dashboardUserReady)await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.ok(dashboardUserReady,'Dashboard heatmap refetches for the selected user');
+  await cdp.evaluate(`document.getElementById('activity-user').value='';document.getElementById('activity-user').dispatchEvent(new Event('change'))`);
   assert.match(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),/^(最近到期 )?\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal((await cdp.evaluate(`document.getElementById('reset-card-expiry').title`)).split('\n').length,3);
   assert.equal(await cdp.evaluate(`document.getElementById('credit-balance').textContent`),'12.346');

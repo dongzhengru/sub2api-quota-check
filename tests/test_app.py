@@ -164,6 +164,79 @@ def test_user_breakdown_validation():
         assert client.get('/api/config').json()['timezone'] == app.state.usage.tz
 
 
+def test_token_activity_directory_filter_and_cache():
+    from datetime import date
+    async def run():
+        calls = []
+        async def handler(request):
+            if request.url.path.endswith('/login'):
+                return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test'}})
+            calls.append((request.url.path, dict(request.url.params)))
+            if request.url.path == '/api/v1/admin/users':
+                page = int(request.url.params['page'])
+                items = ([{'id': 3, 'email': 'system-check@sub2api.com', 'username': '', 'balance': 0},
+                          {'id': 1, 'email': 'dzr@sub2api.com', 'username': '董政儒', 'balance': 1000}]
+                         if page == 1 else [{'id': 2, 'email': 'zzy@sub2api.com', 'username': ''}])
+                return httpx.Response(200, json={'code': 0, 'data': {'items': items, 'pages': 2}})
+            assert request.url.path == '/api/v1/admin/dashboard/snapshot-v2'
+            assert request.url.params['granularity'] == 'day'
+            assert request.url.params['include_trend'] == 'true'
+            assert request.url.params['timezone'] == 'Asia/Shanghai'
+            row = {'date': request.url.params['end_date'], 'requests': 3, 'input_tokens': 10,
+                   'output_tokens': 5, 'cache_creation_tokens': 0, 'cache_read_tokens': 7,
+                   'total_tokens': 22, 'cost': 0.5, 'actual_cost': 0.5}
+            return httpx.Response(200, json={'code': 0, 'data': {'trend': [row]}})
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            result = await service.token_activity()
+            assert result['users'] == [{'email': 'dzr@sub2api.com', 'username': '董政儒'},
+                                       {'email': 'zzy@sub2api.com', 'username': ''}]
+            assert (date.fromisoformat(result['end_date']) - date.fromisoformat(result['start_date'])).days == 364
+            assert result['user'] is None and result['trend'][0]['total_tokens'] == 22
+            snapshots = [params for path, params in calls if path.endswith('snapshot-v2')]
+            assert 'user_id' not in snapshots[0]
+            await service.token_activity()
+            assert len([p for p, _ in calls if p.endswith('snapshot-v2')]) == 1
+            filtered = await service.token_activity('dzr@sub2api.com')
+            snapshots = [params for path, params in calls if path.endswith('snapshot-v2')]
+            assert snapshots[-1]['user_id'] == '1' and filtered['user'] == 'dzr@sub2api.com'
+            assert len([p for p, _ in calls if p == '/api/v1/admin/users']) == 2
+            result['trend'][0]['total_tokens'] = -1
+            assert (await service.token_activity())['trend'][0]['total_tokens'] == 22
+            with pytest.raises(HTTPException) as exc:
+                await service.token_activity('missing@x.com')
+            assert exc.value.status_code == 404
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('trend', [
+    None,
+    [{'date': '2000-01-01', 'requests': 1, 'input_tokens': 1, 'output_tokens': 1,
+      'cache_creation_tokens': 0, 'cache_read_tokens': 0, 'total_tokens': 2, 'cost': 0, 'actual_cost': 0}],
+    [{'date': '2026-11-06', 'requests': 1, 'input_tokens': 1, 'output_tokens': 1,
+      'cache_creation_tokens': 0, 'cache_read_tokens': 0, 'total_tokens': -2, 'cost': 0, 'actual_cost': 0}],
+])
+def test_token_activity_invalid_trend_not_cached(trend):
+    async def run():
+        async def handler(request):
+            return httpx.Response(200, json={'code': 0, 'data': {'trend': trend}})
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            service.token, service.token_deadline = 'test', float('inf')
+            service.users_cached, service.users_deadline = [], float('inf')
+            with pytest.raises(HTTPException) as exc:
+                await service.token_activity()
+            assert exc.value.status_code == 502
+            assert not service.activity_cache
+    asyncio.run(run())
+
+
+def test_token_activity_param_validation():
+    with TestClient(app) as client:
+        assert client.get('/api/token-activity', params={'user': ''}).status_code == 422
+        assert client.get('/api/token-activity', params={'user': 'x' * 255}).status_code == 422
+
+
 
 def test_reset_cards_sorted_whitelisted_cached_and_reauthenticated():
     async def run():

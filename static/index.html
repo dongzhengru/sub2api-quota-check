@@ -9,6 +9,7 @@
  --bg:#0b0e13;--panel:rgba(20,24,31,.6);--panel-solid:#161b22;--line:rgba(255,255,255,.09);
  --ink:#f0f4f8;--muted:#8b949e;--seg:rgba(255,255,255,.06);--seg-active:rgba(255,255,255,.16);
  --accent:#6fd3c0;--warn:#e09563;--danger:#e0705f;--track:rgba(255,255,255,.12);
+ --hm0:rgba(255,255,255,.055);--hm1:#1e3d63;--hm2:#2e6da4;--hm3:#5ea3d8;--hm4:#b3e0fa;
  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
 }
@@ -17,6 +18,7 @@
  --bg:#eef1f4;--panel:rgba(255,255,255,.66);--panel-solid:#fff;--line:rgba(15,23,42,.1);
  --ink:#17222d;--muted:#5c6773;--seg:rgba(15,23,42,.06);--seg-active:rgba(15,23,42,.12);
  --accent:#14907c;--warn:#b05f2c;--danger:#b3402f;--track:rgba(15,23,42,.12);
+ --hm0:rgba(15,23,42,.08);--hm1:#c9def2;--hm2:#8fc0e8;--hm3:#4b93cf;--hm4:#1d64a8;
 }
 *{box-sizing:border-box}
 body{margin:0;min-height:100svh;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
@@ -85,6 +87,32 @@ td small{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-fam
 tbody tr:hover{background:var(--seg)}
 .pagination{justify-content:flex-end;margin-top:16px;font-family:var(--mono);font-size:11px}
 .status{margin:12px 0;line-height:1.7;font-family:var(--mono);font-size:11px}
+.activity{margin-top:20px}
+.activity-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.activity-controls select{max-width:230px;padding:6px 10px;font-size:12px}
+.activity .seg{margin:0}
+.hm-wrap{position:relative;margin-top:14px}
+.hm-scroll{overflow-x:auto;padding-bottom:6px;scrollbar-width:thin;scrollbar-color:var(--track) transparent}
+.hm-scroll::-webkit-scrollbar{height:8px}
+.hm-scroll::-webkit-scrollbar-track{background:var(--seg);border-radius:99px}
+.hm-scroll::-webkit-scrollbar-thumb{background:var(--track);border-radius:99px}
+.hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+.hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,13px);grid-auto-columns:13px;gap:3px;width:max-content}
+.hm-cell{width:13px;height:13px;border-radius:3.5px;background:var(--hm0)}
+.hm-cell[data-level="1"]{background:var(--hm1)}
+.hm-cell[data-level="2"]{background:var(--hm2)}
+.hm-cell[data-level="3"]{background:var(--hm3)}
+.hm-cell[data-level="4"]{background:var(--hm4)}
+.hm-cell.pad{visibility:hidden}
+.hm-cell[data-date]:hover{outline:1px solid var(--ink);outline-offset:1px}
+.hm-months{display:grid;gap:3px;width:max-content;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.hm-months span{grid-row:1;white-space:nowrap}
+.hm-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.hm-legend{display:flex;align-items:center;gap:4px}
+.hm-legend .hm-cell{width:11px;height:11px}
+.hm-tip{position:absolute;z-index:5;pointer-events:none;background:var(--panel-solid);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-family:var(--mono);font-size:11px;line-height:1.7;box-shadow:0 12px 32px rgba(0,0,0,.35);white-space:nowrap;color:var(--muted)}
+.hm-tip b{display:block;color:var(--ink);font-weight:600}
+.hm-tip .hi{color:var(--ink)}
 @media(max-width:660px){main{padding:24px 16px 36px}.cards{grid-template-columns:1fr;gap:16px}.strip{grid-template-columns:1fr}.strip .cell+.cell{border-left:0;border-top:1px solid var(--line)}.quota{padding:22px}.number{font-size:46px}.breakdown{padding:20px}}
 @media(prefers-reduced-motion:reduce){.fill{transition:none}}
 </style>
@@ -117,6 +145,20 @@ tbody tr:hover{background:var(--seg)}
 <p id="stats-status" class="status" role="status" aria-live="polite">等待查询</p>
 <div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col" title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th scope="col">总 Token ↓</th><th scope="col" title="cost">费用 ($)</th></tr></thead><tbody id="stats-body"></tbody></table></div>
 <div class="pagination"><label>每页 <select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" id="prev-page" disabled>上一页</button><span id="page-label">第 1 页</span><button type="button" id="next-page" disabled>下一页</button></div>
+</section>
+<section class="card breakdown activity" aria-labelledby="activity-title">
+<div class="cardhead"><h2 id="activity-title">Token Activity</h2>
+<div class="activity-controls">
+<select id="activity-user" aria-label="选择用户"><option value="">全部用户</option></select>
+<div class="seg" role="group" aria-label="统计口径"><button type="button" data-metric="tokens" class="active" aria-pressed="true">Tokens</button><button type="button" data-metric="cost" aria-pressed="false">Cost</button></div>
+</div></div>
+<p id="activity-error" class="error" role="alert" hidden></p>
+<p id="activity-status" class="status" role="status" aria-live="polite">正在加载近 365 天用量…</p>
+<div class="hm-wrap" id="hm-wrap">
+<div class="hm-scroll" id="hm-scroll"><div class="hm-grid" id="hm-grid" role="img" aria-label="近 365 天 Token 活跃热力图"></div><div class="hm-months" id="hm-months" aria-hidden="true"></div></div>
+<div class="hm-tip" id="hm-tip" hidden></div>
+</div>
+<div class="hm-foot"><div class="hm-legend" aria-hidden="true">少 <span class="hm-cell" data-level="0"></span><span class="hm-cell" data-level="1"></span><span class="hm-cell" data-level="2"></span><span class="hm-cell" data-level="3"></span><span class="hm-cell" data-level="4"></span> 多</div><div id="hm-summary"></div></div>
 </section>
 </main>
 <script>
@@ -241,11 +283,118 @@ document.getElementById('stats-form').addEventListener('submit',e=>{e.preventDef
 document.getElementById('page-size').addEventListener('change',e=>{statsSize=Number(e.target.value);loadStats(1);});
 document.getElementById('prev-page').addEventListener('click',()=>loadStats(statsPage-1));
 document.getElementById('next-page').addEventListener('click',()=>loadStats(statsPage+1));
+let activityData=null,activityMetric='tokens',activityUser='',activityRequest=0,activityController=null;
+const activitySelect=document.getElementById('activity-user'),hmGrid=document.getElementById('hm-grid'),hmMonths=document.getElementById('hm-months'),hmTip=document.getElementById('hm-tip'),hmWrap=document.getElementById('hm-wrap'),hmScroll=document.getElementById('hm-scroll');
+const WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
+async function loadActivity(){
+ const request=++activityRequest;
+ if(activityController)activityController.abort();activityController=new AbortController();
+ const status=document.getElementById('activity-status'),error=document.getElementById('activity-error');
+ error.hidden=true;status.textContent='正在加载近 365 天用量…';
+ try{
+  const params=new URLSearchParams();if(activityUser)params.set('user',activityUser);
+  const response=await fetch(apiPrefix+'/api/token-activity?'+params,{cache:'no-store',signal:activityController.signal,headers:{Accept:'application/json'}});
+  const raw=await response.text();let data;
+  try{data=JSON.parse(raw);}catch(parseError){throw Error(`Token Activity 接口返回了无效数据（HTTP ${response.status}）：${raw.slice(0,120)}`);}
+  if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Token Activity 查询失败');
+  if(request!==activityRequest)return;
+  activityData=data;
+  activitySelect.replaceChildren(new Option('全部用户',''));
+  for(const user of data.users)activitySelect.append(new Option(user.username?`${user.username} · ${user.email}`:user.email,user.email));
+  activitySelect.value=activityUser;
+  if(activitySelect.value!==activityUser){activityUser='';activitySelect.value='';}
+  renderActivity();
+  status.textContent=`${data.start_date} 至 ${data.end_date} · ${data.user||'全部用户'} · ${data.timezone}`;
+ }catch(e){
+  if(request!==activityRequest)return;
+  if(e.name==='AbortError')return;
+  error.textContent=e.message;error.hidden=false;status.textContent='加载失败，请稍后重试。';
+ }
+}
+function renderActivity(){
+ if(!activityData)return;
+ const map=new Map(activityData.trend.map(row=>[row.date,row]));
+ const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
+ const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);
+ const value=row=>activityMetric==='cost'?(row?.cost??0):(row?.total_tokens??0);
+ const cells=[],nonzero=[];let totalTokens=0,totalCost=0,active=0;
+ for(let i=0;i<days;i++){
+  const date=new Date(start.getTime()+i*864e5).toISOString().slice(0,10),row=map.get(date),v=value(row);
+  if(v>0){nonzero.push(v);active++;}
+  totalTokens+=row?.total_tokens||0;totalCost+=row?.cost||0;
+  cells.push({date,row,v});
+ }
+ nonzero.sort((a,b)=>a-b);
+ const q=p=>nonzero.length?nonzero[Math.min(nonzero.length-1,Math.floor(p*(nonzero.length-1)))]:0;
+ const t1=q(.25),t2=q(.5),t3=q(.75);
+ const level=v=>v<=0?0:v<=t1?1:v<=t2?2:v<=t3?3:4;
+ const frag=document.createDocumentFragment();
+ for(let slot=0;slot<cols*7;slot++){
+  const index=slot-lead,cell=document.createElement('div');cell.className='hm-cell';
+  if(index<0||index>=days)cell.classList.add('pad');
+  else{
+   const entry=cells[index];
+   cell.dataset.level=String(level(entry.v));cell.dataset.date=entry.date;
+   cell.setAttribute('aria-label',`${entry.date}：${formatTokens(entry.row?.total_tokens??0)} Token，${formatCost(entry.row?.cost??0)}`);
+  }
+  frag.append(cell);
+ }
+ hmGrid.replaceChildren(frag);
+ hmMonths.replaceChildren();hmMonths.style.gridTemplateColumns=`repeat(${cols},13px)`;
+ let lastMonth=-1;
+ for(let col=0;col<cols;col++){
+  const index=Math.max(0,col*7-lead),d=new Date(start.getTime()+index*864e5),month=d.getUTCMonth();
+  if(month!==lastMonth){
+   lastMonth=month;
+   const span=document.createElement('span');span.textContent=d.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'});span.style.gridColumn=String(col+1);hmMonths.append(span);
+  }
+ }
+ document.getElementById('hm-summary').textContent=`近 ${days} 天 · Token ${formatTokens(totalTokens)} · ${formatCost(totalCost)} · 活跃 ${active} 天`;
+ hmGrid.setAttribute('aria-label',`近 ${days} 天${activityMetric==='cost'?'费用':' Token'} 活跃热力图，活跃 ${active} 天`);
+ hmTip.hidden=true;
+}
+function showActivityTip(cell){
+ const row=activityData?.trend.find(entry=>entry.date===cell.dataset.date);
+ const d=new Date(cell.dataset.date+'T00:00:00Z');
+ const lines=[
+  `${cell.dataset.date} · ${WEEKDAYS[d.getUTCDay()]}`,
+  `Token ${formatTokens(row?.total_tokens??0)}`,
+  `费用 ${formatCost(row?.cost??0)}`,
+  `请求 ${(row?.requests??0).toLocaleString('zh-CN')}`,
+  `输入 ${formatTokens(row?.input_tokens??0)} · 输出 ${formatTokens(row?.output_tokens??0)}`,
+  `缓存 ${formatTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,
+ ];
+ hmTip.replaceChildren();
+ lines.forEach((text,index)=>{
+  const line=document.createElement(index?'span':'b');
+  line.textContent=text;
+  if(index===1||index===2)line.className='hi';
+  hmTip.append(line);
+  if(index)hmTip.append(document.createElement('br'));
+ });
+ hmTip.hidden=false;
+ const wrapRect=hmWrap.getBoundingClientRect(),cellRect=cell.getBoundingClientRect(),tipRect=hmTip.getBoundingClientRect();
+ let left=cellRect.left-wrapRect.left+cellRect.width/2-tipRect.width/2;
+ left=Math.max(0,Math.min(left,wrapRect.width-tipRect.width));
+ let top=cellRect.top-wrapRect.top-tipRect.height-8;
+ if(cellRect.top-tipRect.height-8<8)top=cellRect.bottom-wrapRect.top+8;
+ hmTip.style.left=left+'px';hmTip.style.top=top+'px';
+}
+hmGrid.addEventListener('pointerover',e=>{const cell=e.target.closest('.hm-cell[data-date]');if(cell)showActivityTip(cell);});
+hmGrid.addEventListener('pointerout',e=>{if(e.target.closest('.hm-cell[data-date]'))hmTip.hidden=true;});
+hmScroll.addEventListener('scroll',()=>{hmTip.hidden=true;});
+activitySelect.addEventListener('change',()=>{activityUser=activitySelect.value;loadActivity();});
+document.querySelectorAll('[data-metric]').forEach(button=>button.addEventListener('click',()=>{
+ activityMetric=button.dataset.metric;
+ document.querySelectorAll('[data-metric]').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
+ renderActivity();
+}));
+loadActivity();
 (async()=>{try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
 // 北京时间凌晨 2:00–8:30 暂停自动刷新，仅手动刷新可请求上游。
 function inQuietHours(){const m=Math.floor(Date.now()/60000+480)%1440;return m>=120&&m<510;}
 function autoLoad(){if(inQuietHours()){document.getElementById('quiet-note').hidden=false;return;}load();}
-document.getElementById('manual-refresh').addEventListener('click',()=>load());
+document.getElementById('manual-refresh').addEventListener('click',()=>{load();loadActivity();});
 const themeToggle=document.getElementById('theme-toggle');
 function applyTheme(theme){document.documentElement.dataset.theme=theme;themeToggle.setAttribute('aria-pressed',String(theme==='light'));try{localStorage.setItem('quota-theme',theme);}catch{}}
 applyTheme((()=>{try{return localStorage.getItem('quota-theme')==='light'?'light':'dark';}catch{return 'dark';}})());

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, validateResetCredits, isQuietHours } from '../lib/usage.mjs';
+import { validateUsage, fetchUsage, UsagePoller, ENDPOINT, fetchUserBreakdown, fetchTokenActivity, validateResetCredits, isQuietHours } from '../lib/usage.mjs';
 import { CDP, assertLocalSocket, isAppTarget } from '../lib/cdp.mjs';
 import { assertAppListener as assertPlatformAppListener } from '../lib/daemon.mjs';
 import { proxyEnvironment } from '../lib/helper.mjs';
@@ -159,6 +159,33 @@ test('ranking fetch sends date and pagination to fixed gateway, validates and st
   await assert.rejects(fetchUserBreakdown({...query,start_date:'2026-02-30'}),/参数无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({...query,users:[]})}),/数据无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({detail:'管理员权限不足'},{status:403})}),/管理员权限不足/);
+});
+
+
+test('token activity fetch validates the 365-day window, strips fields and forwards the user filter', async () => {
+  const end=new Date(),start=new Date(end.getTime()-364*86400000);
+  const iso=d=>d.toISOString().slice(0,10);
+  const row={date:iso(end),requests:3,input_tokens:10,output_tokens:5,cache_creation_tokens:0,cache_read_tokens:7,total_tokens:22,cost:0.5,actual_cost:0.5};
+  const payload={start_date:iso(start),end_date:iso(end),timezone:'Asia/Shanghai',user:null,users:[{email:'dzr@sub2api.com',username:'董政儒',balance:1000}],trend:[{...row,secret:'drop'}]};
+  const result=await fetchTokenActivity({user:null},{fetcher:async (url,options)=>{
+    assert.equal(new URL(url).pathname,'/api/quota/api/token-activity');
+    assert.equal(new URL(url).searchParams.get('user'),null);
+    assert.equal(options.redirect,'error');
+    return Response.json(payload);
+  }});
+  assert.equal(result.users[0].balance,undefined);assert.equal(result.trend[0].secret,undefined);
+  assert.equal(result.trend[0].total_tokens,22);assert.equal(result.users[0].username,'董政儒');
+  await fetchTokenActivity({user:'dzr@sub2api.com'},{fetcher:async url=>{
+    assert.equal(new URL(url).searchParams.get('user'),'dzr@sub2api.com');
+    return Response.json({...payload,user:'dzr@sub2api.com'});
+  }});
+  await assert.rejects(fetchTokenActivity({user:''}),/参数无效/);
+  await assert.rejects(fetchTokenActivity({user:123}),/参数无效/);
+  await assert.rejects(fetchTokenActivity({user:null},{fetcher:async()=>Response.json({...payload,end_date:iso(start)})}),/数据无效/);
+  await assert.rejects(fetchTokenActivity({user:null},{fetcher:async()=>Response.json({...payload,trend:[{...row,cost:-1}]})}),/数据无效/);
+  await assert.rejects(fetchTokenActivity({user:null},{fetcher:async()=>Response.json({...payload,trend:[{...row,date:'2000-01-01'}]})}),/数据无效/);
+  await assert.rejects(fetchTokenActivity({user:null},{fetcher:async()=>Response.json({...payload,users:[{email:'x@y.z'}]})}),/数据无效/);
+  await assert.rejects(fetchTokenActivity({user:null},{fetcher:async()=>Response.json({detail:'服务器未更新'},{status:404})}),/服务器未更新/);
 });
 
 

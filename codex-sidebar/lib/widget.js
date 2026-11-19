@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 18) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 19) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -20,6 +20,7 @@ function installQuotaWidget(snapshot, options = {}) {
   // Some renderer contexts deny storage; toggling still works for this session.
   try { collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch {}
   let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
+  let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '';
   const host = document.createElement('div');
   host.id = HOST;
   host.style.cssText = 'display:block;position:absolute;left:10px;right:10px;bottom:14px;min-width:0;width:auto;z-index:2147483000;-webkit-app-region:no-drag;';
@@ -46,6 +47,22 @@ function installQuotaWidget(snapshot, options = {}) {
       .usage-scroll{overflow:auto;max-height:52vh;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
       .usage-status{font-family:var(--qmono);font-size:10px;color:var(--qmuted);margin:0 0 10px}.usage-error{color:#df8842;font-size:11px;margin:0 0 10px}
       .usage-pages{justify-content:flex-end;margin-top:14px;font-family:var(--qmono);font-size:10px}.usage-pages label{display:flex;align-items:center;gap:6px;color:var(--qmuted)}
+      .activity{margin:14px 0 16px;border:1px solid var(--qline);border-radius:16px;padding:14px 16px;background:rgba(255,255,255,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+      .activity-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}.activity-head h3{margin:0;font-size:13px;font-weight:600;letter-spacing:-.01em}
+      .activity-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.activity-controls select{max-width:220px;font-size:11px}
+      .activity .seg{padding:3px}.activity .seg button{padding:5px 11px;font-size:10px}
+      .activity .usage-status{margin:0 0 8px}.activity .usage-error{margin:0 0 8px}
+      .hm-wrap{position:relative}
+      .hm-scroll{overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:rgba(15,23,42,.28) transparent}
+      .hm-scroll::-webkit-scrollbar{height:7px}.hm-scroll::-webkit-scrollbar-track{background:rgba(15,23,42,.06);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb{background:rgba(15,23,42,.22);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--qaccent)}
+      .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;width:max-content}
+      .hm-cell{width:12px;height:12px;border-radius:3px;background:rgba(15,23,42,.08)}
+      .hm-cell[data-level="1"]{background:#c9def2}.hm-cell[data-level="2"]{background:#8fc0e8}.hm-cell[data-level="3"]{background:#4b93cf}.hm-cell[data-level="4"]{background:#1d64a8}
+      .hm-cell.pad{visibility:hidden}.hm-cell[data-date]:hover{outline:1px solid var(--qink);outline-offset:1px}
+      .hm-months{display:grid;gap:3px;width:max-content;margin-top:5px;font-family:var(--qmono);font-size:9px;color:var(--qmuted)}.hm-months span{grid-row:1;white-space:nowrap}
+      .hm-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:9px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
+      .hm-legend{display:flex;align-items:center;gap:3px}.hm-legend .hm-cell{width:10px;height:10px}
+      .hm-tip{position:absolute;z-index:5;pointer-events:none;background:var(--qsolid);border:1px solid var(--qedge);border-radius:10px;padding:8px 11px;font-family:var(--qmono);font-size:10px;line-height:1.7;box-shadow:0 12px 30px rgba(2,6,23,.25);white-space:nowrap;color:var(--qmuted)}.hm-tip b{display:block;color:var(--qink)}.hm-tip .hi{color:var(--qink)}
       .head,.label{display:flex;justify-content:space-between;align-items:center;gap:8px}
       .title{font-family:var(--qmono);font-weight:600;font-size:11px;letter-spacing:.06em}
       .toggle{display:flex;align-items:center;gap:4px;flex:1;min-width:0;border:0;border-radius:4px;padding:3px;margin:-3px;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;white-space:nowrap}
@@ -86,10 +103,14 @@ function installQuotaWidget(snapshot, options = {}) {
       </div>
     </section>
     <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+    <section class="activity" aria-label="Token Activity"><div class="activity-head"><h3>Token Activity</h3><div class="activity-controls"><select class="activity-user" aria-label="选择用户"><option value="">全部用户</option></select><div class="seg" role="group" aria-label="统计口径"><button type="button" data-metric="tokens" class="active" aria-pressed="true">Tokens</button><button type="button" data-metric="cost" aria-pressed="false">Cost</button></div></div></div>
+    <p class="activity-status usage-status" role="status" aria-live="polite"></p><p class="activity-error usage-error" role="alert" hidden></p>
+    <div class="hm-wrap"><div class="hm-scroll"><div class="hm-grid" role="img" aria-label="近 365 天 Token 活跃热力图"></div><div class="hm-months" aria-hidden="true"></div></div><div class="hm-tip" hidden></div></div>
+    <div class="hm-foot"><div class="hm-legend" aria-hidden="true">少 <span class="hm-cell" data-level="0"></span><span class="hm-cell" data-level="1"></span><span class="hm-cell" data-level="2"></span><span class="hm-cell" data-level="3"></span><span class="hm-cell" data-level="4"></span> 多</div><div class="hm-summary"></div></div></section>
     <form class="usage-filters"><div class="seg" role="group" aria-label="快捷日期"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button></div><div class="usage-dates"><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></div></form>
     <p class="usage-status" role="status" aria-live="polite"></p><p class="usage-error" role="alert" hidden></p>
     <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
-    <div class="usage-pages"><label>每页 <select><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
+    <div class="usage-pages"><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
   function paintCollapse() {
     root.getElementById('quota-details').hidden = collapsed;
@@ -124,6 +145,7 @@ function installQuotaWidget(snapshot, options = {}) {
   }
   function paint() {
     if (usageDeadline && Date.now()>usageDeadline) receiveUsage({id:usageId,error:'用量查询超时，请检查后台连接后重试。'});
+    if (activityDeadline && Date.now()>activityDeadline) receiveActivity({id:activityId,error:'Token Activity 查询超时，请检查后台连接后重试。'});
     const disconnected = Date.now() - lastContact > 45_000;
     const beijingMinutes = Math.floor(Date.now() / 60_000 + 8 * 60) % 1440;
     const quiet = beijingMinutes >= 120 && beijingMinutes < 510;
@@ -187,7 +209,7 @@ function installQuotaWidget(snapshot, options = {}) {
       if(!startInput.value || !endInput.value || startInput.value>endInput.value) { usageError.hidden=false;usageError.textContent='开始日期不能晚于结束日期。';return; }
       usageRange={start_date:startInput.value,end_date:endInput.value};
     }
-    usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('select').value)};
+    usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value)};
     usageDeadline=Date.now()+30000;
     usageError.hidden=true;usageStatus.textContent='正在查询…';root.querySelector('tbody').replaceChildren();
     root.querySelector('.usage-prev').disabled=true;root.querySelector('.usage-next').disabled=true;
@@ -215,14 +237,114 @@ function installQuotaWidget(snapshot, options = {}) {
     root.querySelector('.usage-page').textContent=`第 ${usagePage} 页`;
     root.querySelector('.usage-prev').disabled=usagePage<=1;root.querySelector('.usage-next').disabled=!data.has_more;
   }
-  root.querySelector('.usage-link').addEventListener('click',()=>{dialog.showModal();quickRange(1);queryUsage(1,true);});
+  const activitySelect=root.querySelector('.activity-user'),activityStatus=root.querySelector('.activity-status'),activityError=root.querySelector('.activity-error'),hmGrid=root.querySelector('.hm-grid'),hmMonths=root.querySelector('.hm-months'),hmTip=root.querySelector('.hm-tip'),hmWrap=root.querySelector('.hm-wrap'),hmScroll=root.querySelector('.hm-scroll'),hmSummary=root.querySelector('.hm-summary');
+  const WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
+  const fmtTokens=n=>Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US');
+  const fmtCost=n=>'$'+n.toFixed(3);
+  function queryActivity() {
+    activityRequest={id:++activityId,user:activityUser||null};
+    activityDeadline=Date.now()+30000;
+    activityError.hidden=true;activityStatus.textContent='正在加载近 365 天用量…';
+  }
+  function receiveActivity(result) {
+    if(result.id!==activityId || !dialog.open)return;
+    activityDeadline=0;
+    if(result.error){activityStatus.textContent='加载失败，请重新打开重试。';activityError.textContent=result.error;activityError.hidden=false;return;}
+    activityError.hidden=true;
+    activityData=result.data;
+    activitySelect.replaceChildren(new Option('全部用户',''));
+    for(const user of activityData.users)activitySelect.append(new Option(user.username?`${user.username} · ${user.email}`:user.email,user.email));
+    activitySelect.value=activityUser;
+    if(activitySelect.value!==activityUser){activityUser='';activitySelect.value='';}
+    renderActivity();
+    activityStatus.textContent=`${activityData.start_date} 至 ${activityData.end_date} · ${activityData.user||'全部用户'} · ${activityData.timezone}`;
+  }
+  function renderActivity() {
+    if(!activityData)return;
+    const map=new Map(activityData.trend.map(row=>[row.date,row]));
+    const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
+    const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);
+    const value=row=>activityMetric==='cost'?(row?.cost??0):(row?.total_tokens??0);
+    const cells=[],nonzero=[];let totalTokens=0,totalCost=0,active=0;
+    for(let i=0;i<days;i++){
+      const date=new Date(start.getTime()+i*864e5).toISOString().slice(0,10),row=map.get(date),v=value(row);
+      if(v>0){nonzero.push(v);active++;}
+      totalTokens+=row?.total_tokens||0;totalCost+=row?.cost||0;
+      cells.push({date,row,v});
+    }
+    nonzero.sort((a,b)=>a-b);
+    const q=p=>nonzero.length?nonzero[Math.min(nonzero.length-1,Math.floor(p*(nonzero.length-1)))]:0;
+    const t1=q(.25),t2=q(.5),t3=q(.75);
+    const level=v=>v<=0?0:v<=t1?1:v<=t2?2:v<=t3?3:4;
+    const frag=document.createDocumentFragment();
+    for(let slot=0;slot<cols*7;slot++){
+      const index=slot-lead,cell=document.createElement('div');cell.className='hm-cell';
+      if(index<0||index>=days)cell.classList.add('pad');
+      else{
+        const entry=cells[index];
+        cell.dataset.level=String(level(entry.v));cell.dataset.date=entry.date;
+        cell.setAttribute('aria-label',`${entry.date}：${fmtTokens(entry.row?.total_tokens??0)} Token，${fmtCost(entry.row?.cost??0)}`);
+      }
+      frag.append(cell);
+    }
+    hmGrid.replaceChildren(frag);
+    hmMonths.replaceChildren();hmMonths.style.gridTemplateColumns=`repeat(${cols},12px)`;
+    let lastMonth=-1;
+    for(let col=0;col<cols;col++){
+      const index=Math.max(0,col*7-lead),d=new Date(start.getTime()+index*864e5),month=d.getUTCMonth();
+      if(month!==lastMonth){
+        lastMonth=month;
+        const span=document.createElement('span');span.textContent=d.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'});span.style.gridColumn=String(col+1);hmMonths.append(span);
+      }
+    }
+    hmSummary.textContent=`近 ${days} 天 · Token ${fmtTokens(totalTokens)} · ${fmtCost(totalCost)} · 活跃 ${active} 天`;
+    hmGrid.setAttribute('aria-label',`近 ${days} 天${activityMetric==='cost'?'费用':' Token'} 活跃热力图，活跃 ${active} 天`);
+    hmTip.hidden=true;
+  }
+  function showActivityTip(cell) {
+    const row=activityData?.trend.find(entry=>entry.date===cell.dataset.date);
+    const d=new Date(cell.dataset.date+'T00:00:00Z');
+    const lines=[
+      `${cell.dataset.date} · ${WEEKDAYS[d.getUTCDay()]}`,
+      `Token ${fmtTokens(row?.total_tokens??0)}`,
+      `费用 ${fmtCost(row?.cost??0)}`,
+      `请求 ${(row?.requests??0).toLocaleString('en-US')}`,
+      `输入 ${fmtTokens(row?.input_tokens??0)} · 输出 ${fmtTokens(row?.output_tokens??0)}`,
+      `缓存 ${fmtTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,
+    ];
+    hmTip.replaceChildren();
+    lines.forEach((text,index)=>{
+      const line=document.createElement(index?'span':'b');
+      line.textContent=text;
+      if(index===1||index===2)line.className='hi';
+      hmTip.append(line);
+      if(index)hmTip.append(document.createElement('br'));
+    });
+    hmTip.hidden=false;
+    const wrapRect=hmWrap.getBoundingClientRect(),cellRect=cell.getBoundingClientRect(),tipRect=hmTip.getBoundingClientRect();
+    let left=cellRect.left-wrapRect.left+cellRect.width/2-tipRect.width/2;
+    left=Math.max(0,Math.min(left,wrapRect.width-tipRect.width));
+    let top=cellRect.top-wrapRect.top-tipRect.height-8;
+    if(cellRect.top-tipRect.height-8<8)top=cellRect.bottom-wrapRect.top+8;
+    hmTip.style.left=left+'px';hmTip.style.top=top+'px';
+  }
+  hmGrid.addEventListener('pointerover',e=>{const cell=e.target.closest('.hm-cell[data-date]');if(cell)showActivityTip(cell);});
+  hmGrid.addEventListener('pointerout',e=>{if(e.target.closest('.hm-cell[data-date]'))hmTip.hidden=true;});
+  hmScroll.addEventListener('scroll',()=>{hmTip.hidden=true;});
+  activitySelect.addEventListener('change',()=>{activityUser=activitySelect.value;queryActivity();});
+  root.querySelectorAll('[data-metric]').forEach(button=>button.addEventListener('click',()=>{
+    activityMetric=button.dataset.metric;
+    root.querySelectorAll('[data-metric]').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
+    renderActivity();
+  }));
+  root.querySelector('.usage-link').addEventListener('click',()=>{dialog.showModal();quickRange(1);queryUsage(1,true);queryActivity();});
   root.querySelector('.usage-close').addEventListener('click',()=>dialog.close());
-  dialog.addEventListener('close',()=>{usageId++;usageRequest=null;usageDeadline=0;});
+  dialog.addEventListener('close',()=>{usageId++;usageRequest=null;usageDeadline=0;activityId++;activityRequest=null;activityDeadline=0;hmTip.hidden=true;});
   dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
   root.querySelector('.usage-filters').addEventListener('submit',e=>{e.preventDefault();queryUsage(1,true);});
   root.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{quickRange(Number(b.dataset.days));queryUsage(1,true);}));
   for(const input of [startInput,endInput]) input.addEventListener('input',()=>root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');}));
-  root.querySelector('select').addEventListener('change',()=>queryUsage(1));
+  root.querySelector('.usage-size').addEventListener('change',()=>queryUsage(1));
   root.querySelector('.usage-prev').addEventListener('click',()=>queryUsage(usagePage-1));
   root.querySelector('.usage-next').addEventListener('click',()=>queryUsage(usagePage+1));
   function findSidebar() {
@@ -282,10 +404,12 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 18,
+    version: 19,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},
+    receiveActivity,
+    takeActivityRequest() {const request=activityRequest;activityRequest=null;return request;},
     takeRefreshRequest() { const requested = refreshRequested; refreshRequested = false; return requested; },
     dispose() { disposed = true; observer.disconnect(); clearInterval(timer); dialog.close(); host.remove(); if (positioned) positioned.style.position = ''; delete window[KEY]; },
   };

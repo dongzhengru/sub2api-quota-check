@@ -85,8 +85,10 @@ export class UsagePoller {
 }
 
 // Fetch in the daemon, keeping renderer networking independent of app CSP/CORS.
+const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
+const TREND_FIELDS = ['requests','input_tokens','output_tokens','cache_creation_tokens','cache_read_tokens','total_tokens','cost','actual_cost'];
+
 export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
-  const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
   if (!query || !validDate(query.start_date) || !validDate(query.end_date) || query.start_date > query.end_date ||
       !Number.isInteger(query.page) || query.page < 1 || query.page > 10000 || ![20,50,100].includes(query.page_size)) {
     throw new Error('用量查询参数无效');
@@ -110,4 +112,33 @@ export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
     timezone:data.timezone, has_more:data.has_more, users:data.users.map(user => Object.fromEntries(
       ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']
         .map(key => [key, key === 'email' ? (typeof user[key] === 'string' ? user[key] : '') : (Number.isFinite(user[key]) ? user[key] : null)]))) };
+}
+
+export async function fetchTokenActivity(query, { fetcher = fetch } = {}) {
+  if (!query || (query.user != null && (typeof query.user !== 'string' || !query.user || query.user.length > 254))) {
+    throw new Error('Token Activity 查询参数无效');
+  }
+  const url = new URL('./token-activity', ENDPOINT);
+  if (query.user) url.searchParams.set('user', query.user);
+  const response = await fetcher(url.toString(), { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000), redirect:'error' });
+  if (!response.ok) {
+    let detail;
+    try { detail = (await response.json()).detail; } catch {}
+    throw new Error(typeof detail === 'string' ? detail : `Token Activity 接口 HTTP ${response.status}，请确认服务器已更新用量统计接口`);
+  }
+  const data = await response.json();
+  if (!data || !validDate(data.start_date) || !validDate(data.end_date) ||
+      Math.round((Date.parse(data.end_date) - Date.parse(data.start_date)) / 86400000) !== 364 ||
+      typeof data.timezone !== 'string' || (data.user != null && typeof data.user !== 'string') ||
+      !Array.isArray(data.users) || data.users.length > 5000 ||
+      data.users.some(user => !user || typeof user.email !== 'string' || !user.email || typeof user.username !== 'string') ||
+      !Array.isArray(data.trend) || data.trend.length > 365 ||
+      data.trend.some(row => !row || !validDate(row.date) || row.date < data.start_date || row.date > data.end_date ||
+        TREND_FIELDS.some(key => !Number.isFinite(row[key]) || row[key] < 0))) {
+    throw new Error('Token Activity 接口返回数据无效');
+  }
+  return { start_date: data.start_date, end_date: data.end_date, timezone: data.timezone,
+    user: data.user || null,
+    users: data.users.map(user => ({ email: user.email, username: user.username })),
+    trend: data.trend.map(row => Object.fromEntries(['date', ...TREND_FIELDS].map(key => [key, row[key]]))) };
 }

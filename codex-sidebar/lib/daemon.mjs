@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CDP, isAppTarget, listTargets } from './cdp.mjs';
-import { UsagePoller, fetchUserBreakdown } from './usage.mjs';
+import { UsagePoller, fetchUserBreakdown, fetchTokenActivity } from './usage.mjs';
 import { assertWindowsListener } from './windows.mjs';
 
 const exec = promisify(execFile);
@@ -96,13 +96,19 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
               sessions.set(target.id, client);
               fresh = true;
             }
-            const state = await client.evaluate(`(${TRUSTED_PAGE}) ? ({ installed: !!window.__zhengruQuotaSidebarV1, refresh: window.__zhengruQuotaSidebarV1?.takeRefreshRequest?.() || false, usage: window.__zhengruQuotaSidebarV1?.takeUsageRequest?.() || null }) : null`);
+            const state = await client.evaluate(`(${TRUSTED_PAGE}) ? ({ installed: !!window.__zhengruQuotaSidebarV1, refresh: window.__zhengruQuotaSidebarV1?.takeRefreshRequest?.() || false, usage: window.__zhengruQuotaSidebarV1?.takeUsageRequest?.() || null, activity: window.__zhengruQuotaSidebarV1?.takeActivityRequest?.() || null }) : null`);
             if (state?.usage) {
               const request = state.usage;
               // Do not block quota refresh or other windows on a ranking query.
               void fetchUserBreakdown(request).then(
                 data => ({id:request.id,data}), error => ({id:request.id,error:error.message || '用量查询失败'})
               ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveUsage?.(${JSON.stringify(result)})`)).catch(() => {});
+            }
+            if (state?.activity) {
+              const request = state.activity;
+              void fetchTokenActivity(request).then(
+                data => ({id:request.id,data}), error => ({id:request.id,error:error.message || 'Token Activity 查询失败'})
+              ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveActivity?.(${JSON.stringify(result)})`)).catch(() => {});
             }
             if (state?.refresh) nextUsage = poller.refresh({ force: true });
             if (state) {
