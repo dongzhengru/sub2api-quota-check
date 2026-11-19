@@ -129,7 +129,8 @@ try {
   await cdp.evaluate(`${ui}.querySelector('.toggle').click()`);
   await cdp.evaluate(`${ui}.querySelector('.refresh').click()`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('#quota-details').hidden`), false, 'Refresh does not toggle collapse');
-  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeRefreshRequest()`), true);
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeRefreshRequest()`), 1);
+  await cdp.evaluate(`window.__zhengruQuotaDispatch = payload => { (window.__quotaDispatches ||= []).push(JSON.parse(payload)); }`);
   await inject(snapshot);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`), false);
   assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`), null);
@@ -137,12 +138,14 @@ try {
   assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`), true);
   assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('.hm-grid .hm-cell.skel').length`),371,'Activity shows a skeleton while loading');
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-grid').getAttribute('aria-busy')`),'true');
+  const dialogHeight = await cdp.evaluate(`${ui}.querySelector('dialog').getBoundingClientRect().height`);
   assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('tbody .skel-row').length`),6,'Ranking shows skeleton rows while loading');
   await cdp.call('Page.enable');
   const loadingShot=await cdp.call('Page.captureScreenshot',{format:'png'});
   await writeFile(new URL('preview-loading.png',artifacts),Buffer.from(loadingShot.data,'base64'));
   let query = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
   assert.equal(query.start_date,query.end_date);assert.equal(query.page,1);
+  assert.equal(await cdp.evaluate(`window.__quotaDispatches.filter(m => m.kind === 'usage').at(-1).id`), query.id, 'Usage query dispatches immediately through the binding');
   const usageResult = { id:query.id, data:{...query,timezone:'Asia/Shanghai',has_more:true,users:[{user_id:1,email:'<img src=x onerror=alert(1)>',requests:225,input_tokens:1254036,output_tokens:106773,cache_tokens:16050688,total_tokens:17411497,cost:4.57638018}]} };
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /17.41 M/);
@@ -150,10 +153,12 @@ try {
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /92\.8%/);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody .skel-row')===null`),true,'Skeleton rows replaced by results');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').getBoundingClientRect().height`), dialogHeight, 'Dialog keeps a fixed size between skeleton and results');
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.rank-status').hidden`),true,'Ranking summary sentence removed');
   // Token Activity: 365-day heatmap with user filter and Tokens/Cost toggle.
   let activityQuery = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`);
   assert.equal(activityQuery.user,null);
+  assert.equal(await cdp.evaluate(`window.__quotaDispatches.filter(m => m.kind === 'activity').at(-1).id`), activityQuery.id, 'Activity query dispatches immediately through the binding');
   const activityResult = {id:activityQuery.id,data:{...dashboardActivity,users:[{email:'dzr@sub2api.com',username:'<img src=x onerror=alert(1)>'},{email:'zzy@sub2api.com',username:''}]}};
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify(activityResult)})`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-status').hidden`),true,'Activity range sentence removed');
@@ -192,6 +197,7 @@ try {
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
   assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('tbody tr:not(.skel-row)').length`),0);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody .skel-row')!==null`),true,'Stale results leave the loading skeleton');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').getBoundingClientRect().height`), dialogHeight, 'Dialog keeps a fixed size while switching queries');
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({id:weekQuery.id,error:'模拟查询失败'})})`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.rank-error').textContent`),'模拟查询失败');
   await cdp.evaluate(`${ui}.querySelector('.usage-filters').requestSubmit()`);
@@ -213,7 +219,8 @@ try {
   assert.equal(animation.iterations, 1);
   assert.equal(animation.duration, 450);
   assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('.refresh').getAttribute('aria-busy')`), 'true');
-  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeRefreshRequest()`), true);
+  assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeRefreshRequest()`), 2);
+  assert.deepEqual(await cdp.evaluate(`window.__quotaDispatches.at(-1)`), { kind: 'refresh', id: 2 }, 'Refresh dispatches immediately through the binding');
   assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeRefreshRequest()`), false);
   await inject({ ...snapshot, loading: true });
   assert.equal(await cdp.evaluate(`document.getElementById('zhengru-quota-sidebar').shadowRoot.querySelector('.refresh').disabled`), true);

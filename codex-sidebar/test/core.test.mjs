@@ -145,6 +145,15 @@ test('CDP request timeouts do not leak pending promises', async () => {
   await assert.rejects(cdp.call('Runtime.enable'), /超时/);
   assert.equal(cdp.pending.size, 0); cdp.close();
 });
+test('CDP dispatches protocol events to subscribers and ignores unsubscribed methods', () => {
+  const ws = new FakeSocket(); const cdp = new CDP(ws, 1000);
+  const events = [];
+  cdp.on('Runtime.bindingCalled', params => events.push(params));
+  ws.respond({ method: 'Runtime.bindingCalled', params: { name: 'b', payload: '{}' } });
+  ws.respond({ method: 'Runtime.consoleAPICalled', params: {} });
+  assert.deepEqual(events, [{ name: 'b', payload: '{}' }]);
+  cdp.close();
+});
 
 
 test('ranking fetch sends date and pagination to fixed gateway, validates and strips fields', async () => {

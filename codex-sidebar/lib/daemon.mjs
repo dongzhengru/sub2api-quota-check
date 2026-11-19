@@ -9,6 +9,7 @@ import { assertWindowsListener } from './windows.mjs';
 const exec = promisify(execFile);
 export const DISPOSE = 'window.__zhengruQuotaSidebarV1?.dispose(); true';
 const TRUSTED_PAGE = `location.protocol === 'app:' && ['-', 'codex', 'localhost'].includes(location.hostname)`;
+const BINDING = '__zhengruQuotaDispatch';
 
 export function isAppExecutable(value) {
   return /\/(?:Codex|ChatGPT)\.app\/Contents\/(?:MacOS\/(?:Codex|ChatGPT)|Frameworks\/.*\/MacOS\/(?:Codex|ChatGPT)(?: Helper)?(?: \([^)]+\))?)$/.test(value.trim());
@@ -73,7 +74,40 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
   const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
   const inject = (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector }) }) }`);
+  const usageFetch = dependencies.usageFetch || fetchUserBreakdown;
+  const activityFetch = dependencies.activityFetch || fetchTokenActivity;
   const sessions = new Map();
+  // Binding events and the polling fallback deliver the same requests; per-session
+  // cursors deduplicate them, and busy flags bound concurrent upstream fetches.
+  const meta = new Map();
+  const drop = id => { sessions.delete(id); meta.delete(id); };
+  const runUsage = (id, client, request) => {
+    const state = meta.get(id); state.usage = request.id; state.usageBusy = true;
+    void usageFetch(request).then(
+      data => ({id:request.id,data}), error => ({id:request.id,error:error.message || '用量查询失败'})
+    ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveUsage?.(${JSON.stringify(result)})`))
+      .catch(() => {}).finally(() => { if (meta.get(id) === state) state.usageBusy = false; });
+  };
+  const runActivity = (id, client, request) => {
+    const state = meta.get(id); state.activity = request.id; state.activityBusy = true;
+    void activityFetch(request).then(
+      data => ({id:request.id,data}), error => ({id:request.id,error:error.message || 'Token Activity 查询失败'})
+    ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveActivity?.(${JSON.stringify(result)})`))
+      .catch(() => {}).finally(() => { if (meta.get(id) === state) state.activityBusy = false; });
+  };
+  const accept = (kind, id, client, request) => {
+    const state = meta.get(id);
+    if (!state || sessions.get(id) !== client || !request || !Number.isInteger(request.id) || request.id <= state[kind] || state[kind + 'Busy']) return;
+    (kind === 'usage' ? runUsage : runActivity)(id, client, request);
+  };
+  const forceRefresh = (id, client, refreshId) => {
+    const state = meta.get(id);
+    if (!state || sessions.get(id) !== client) return;
+    if (Number.isInteger(refreshId)) { if (refreshId <= state.refresh) return; state.refresh = refreshId; }
+    nextUsage = poller.refresh({ force: true });
+    // Push the finished snapshot right away; waiting for the next tick adds seconds of latency.
+    void nextUsage.then(snapshot => Promise.allSettled([...sessions.values()].map(session => inject(session, snapshot)))).catch(() => {});
+  };
   let previousError = '';
   let nextUsage = Promise.resolve();
   try {
@@ -85,7 +119,7 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
         nextUsage = poller.refresh();
         const alive = new Set(targets.map(t => t.id));
         for (const [id, client] of sessions) {
-          if (!alive.has(id) || client.closed) { client.close(); sessions.delete(id); }
+          if (!alive.has(id) || client.closed) { client.close(); drop(id); }
         }
         let verified = false;
         for (const target of targets) {
@@ -98,33 +132,28 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
               if (!verified) { await verify(port); verified = true; }
               client = await connect(target.webSocketDebuggerUrl, port);
               sessions.set(target.id, client);
+              meta.set(target.id, { usage: 0, activity: 0, refresh: 0, usageBusy: false, activityBusy: false });
+              await client.call('Runtime.enable');
+              await client.call('Runtime.addBinding', { name: BINDING });
+              client.on('Runtime.bindingCalled', event => {
+                if (event?.name !== BINDING || typeof event.payload !== 'string' || event.payload.length > 4096) return;
+                let message; try { message = JSON.parse(event.payload); } catch { return; }
+                if (message?.kind === 'usage') accept('usage', target.id, client, message);
+                else if (message?.kind === 'activity') accept('activity', target.id, client, message);
+                else if (message?.kind === 'refresh') forceRefresh(target.id, client, message.id);
+              });
               fresh = true;
             }
             const state = await client.evaluate(`(${TRUSTED_PAGE}) ? ({ installed: !!window.__zhengruQuotaSidebarV1, refresh: window.__zhengruQuotaSidebarV1?.takeRefreshRequest?.() || false, usage: window.__zhengruQuotaSidebarV1?.takeUsageRequest?.() || null, activity: window.__zhengruQuotaSidebarV1?.takeActivityRequest?.() || null }) : null`);
-            if (state?.usage) {
-              const request = state.usage;
-              // Do not block quota refresh or other windows on a ranking query.
-              void fetchUserBreakdown(request).then(
-                data => ({id:request.id,data}), error => ({id:request.id,error:error.message || '用量查询失败'})
-              ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveUsage?.(${JSON.stringify(result)})`)).catch(() => {});
-            }
-            if (state?.activity) {
-              const request = state.activity;
-              void fetchTokenActivity(request).then(
-                data => ({id:request.id,data}), error => ({id:request.id,error:error.message || 'Token Activity 查询失败'})
-              ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveActivity?.(${JSON.stringify(result)})`)).catch(() => {});
-            }
-            if (state?.refresh) {
-              nextUsage = poller.refresh({ force: true });
-              // Push the finished snapshot right away; waiting for the next tick adds seconds of latency.
-              void nextUsage.then(snapshot => Promise.allSettled([...sessions.values()].map(session => inject(session, snapshot)))).catch(() => {});
-            }
+            if (state?.usage) accept('usage', target.id, client, state.usage);
+            if (state?.activity) accept('activity', target.id, client, state.activity);
+            if (state?.refresh) forceRefresh(target.id, client, state.refresh);
             if (state) {
               const result = await inject(client, poller.snapshot);
               if (fresh) log(result?.mounted ? '额度卡片已挂载' : '已连接界面，等待侧栏出现');
             }
           } catch (error) {
-            client?.close(); sessions.delete(target.id);
+            client?.close(); drop(target.id);
             log(`页面连接暂不可用：${error.message}`);
           }
         }
@@ -135,7 +164,7 @@ async function runEndpoint({ port, selector, signal, poller, log, dependencies =
         if (message !== previousError) log(message);
         previousError = message;
         for (const client of sessions.values()) client.close();
-        sessions.clear();
+        sessions.clear(); meta.clear();
       }
       if (!signal.aborted) await new Promise(resolve => {
         const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };

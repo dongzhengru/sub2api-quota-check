@@ -6,12 +6,16 @@ export class CDP {
     this.timeout = timeout;
     this.nextId = 0;
     this.pending = new Map();
+    this.listeners = new Map();
     this.closed = false;
     ws.addEventListener('message', event => {
       let response;
       try { response = JSON.parse(event.data); } catch { return; }
       const p = this.pending.get(response.id);
-      if (!p) return;
+      if (!p) {
+        if (response.method) for (const handler of this.listeners.get(response.method) || []) handler(response.params);
+        return;
+      }
       clearTimeout(p.timer);
       this.pending.delete(response.id);
       if (response.error) p.reject(new Error(response.error.message));
@@ -53,6 +57,10 @@ export class CDP {
     const value = await this.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
     if (value.exceptionDetails) throw new Error(value.exceptionDetails.text || '页面执行失败');
     return value.result?.value;
+  }
+  on(method, handler) {
+    if (!this.listeners.has(method)) this.listeners.set(method, new Set());
+    this.listeners.get(method).add(handler);
   }
   close() { this.rejectPending(); this.ws.close(); }
 }

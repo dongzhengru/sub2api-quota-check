@@ -2,7 +2,10 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 22) window[KEY]?.dispose();
+  const BINDING = '__zhengruQuotaDispatch';
+  // Immediate channel to the daemon; the polling request state stays as fallback.
+  const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
+  if (window[KEY]?.version !== 25) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -12,7 +15,7 @@ function installQuotaWidget(snapshot, options = {}) {
   let scheduled = false;
   let sidebar = null;
   let positioned = null;
-  let refreshRequested = false;
+  let refreshRequested = false, refreshId = 0;
   let waitingForRefresh = false;
   let lastContact = Date.now();
   const COLLAPSED_KEY = 'zhengruQuotaSidebar.collapsed';
@@ -27,7 +30,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `
     <style>
-      :host{font-family:inherit;font-size:12px;color-scheme:light;--qmono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--qink:#101d29;--qmuted:rgba(16,29,41,.6);--qbg:linear-gradient(165deg,rgba(255,255,255,.82),rgba(255,255,255,.68));--qsolid:#fff;--qhead:rgba(255,255,255,.66);--qline:rgba(255,255,255,.55);--qedge:rgba(15,23,42,.14);--qtrack:rgba(15,23,42,.13);--qseg:rgba(255,255,255,.5);--qaccent:#12a48c;--qradius:26px;--qshadow:0 26px 56px rgba(2,6,23,.3),0 10px 22px rgba(2,6,23,.18);--qbounce:cubic-bezier(.34,1.56,.64,1)}
+      :host{font-family:inherit;font-size:12px;color-scheme:light;--qmono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--qink:#101d29;--qmuted:rgba(16,29,41,.6);--qbg:linear-gradient(165deg,rgba(255,255,255,.88),rgba(255,255,255,.78));--qsolid:#fff;--qhead:rgba(255,255,255,.66);--qline:rgba(255,255,255,.55);--qedge:rgba(15,23,42,.14);--qtrack:rgba(15,23,42,.13);--qseg:rgba(255,255,255,.5);--qaccent:#12a48c;--qradius:26px;--qshadow:0 26px 56px rgba(2,6,23,.3),0 10px 22px rgba(2,6,23,.18);--qbounce:cubic-bezier(.34,1.56,.64,1)}
       *{box-sizing:border-box}
       .card{padding:10px 11px;border:1px solid var(--qline);border-radius:var(--qradius);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);box-shadow:var(--qshadow);color:var(--qink);line-height:1.35;user-select:none;position:relative;isolation:isolate;overflow:hidden;animation:lg-in .55s var(--qbounce) both}
       .card::before,dialog::before{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;pointer-events:none;mix-blend-mode:screen;opacity:.6;filter:url(#lg-lens);background:linear-gradient(125deg,transparent 30%,rgba(255,255,255,.4) 46%,rgba(255,255,255,.04) 58%,transparent 72%),radial-gradient(120% 120% at 50% 50%,transparent 72%,rgba(255,255,255,.3) 90%,rgba(150,180,255,.18) 100%)}
@@ -37,14 +40,15 @@ function installQuotaWidget(snapshot, options = {}) {
       .toggle:active,.refresh:active,.usage-close:active,dialog button:active,.seg button:active{transform:scale(.93)}
       @keyframes lg-in{from{opacity:0;transform:scale(.955) translateY(5px)}to{opacity:1;transform:none}}
       .actions{display:flex;align-items:center;gap:5px}.usage-link{border:0;background:transparent;color:inherit;font:inherit;font-size:10px;opacity:.65;cursor:pointer;padding:3px}.usage-link:hover{opacity:1;text-decoration:underline}
-      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
+      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
+      .dialog-head,.activity,.usage-filters,.usage-pages{flex:none}
       .dialog-head,.usage-pages{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.dialog-head{justify-content:space-between}.dialog-head h2{font-size:15px;font-weight:600;margin:0;letter-spacing:-.01em}
       .usage-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--qline);border-radius:9px;background:var(--qseg);color:inherit;cursor:pointer;opacity:.75}.usage-close:hover{opacity:1;background:var(--qtrack)}.usage-close:focus-visible{outline:2px solid var(--qaccent);outline-offset:1px}
       .usage-filters{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0 12px}
       .seg{display:inline-flex;gap:3px;background:rgba(15,23,42,.05);border:1px solid var(--qline);border-radius:14px;padding:4px;box-shadow:inset 0 1px 3px rgba(15,23,42,.08)}.seg button{border:0;background:transparent;color:inherit;opacity:.62;font-family:var(--qmono);font-size:11px;padding:6px 13px;border-radius:11px;cursor:pointer}.seg button.active{background:linear-gradient(180deg,#fff,rgba(255,255,255,.72));opacity:1;font-weight:600;box-shadow:0 3px 8px rgba(2,6,23,.14),inset 0 1px 0 #fff}
       .usage-dates{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.usage-dates label{display:flex;align-items:center;gap:6px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
       dialog button,dialog input,dialog select{font:inherit;color:inherit;background:transparent;border:1px solid var(--qline);border-radius:8px;padding:6px 9px}dialog button{cursor:pointer}dialog button:disabled{opacity:.4;cursor:default}
-      .usage-scroll{overflow:auto;max-height:52vh;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
+      .usage-scroll{overflow:auto;flex:1;min-height:140px;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
       .usage-status{font-family:var(--qmono);font-size:10px;color:var(--qmuted);margin:0 0 10px}.usage-error{color:#df8842;font-size:11px;margin:0 0 10px}
       .usage-pages{justify-content:flex-end;margin-top:14px;font-family:var(--qmono);font-size:10px}.usage-pages label{display:flex;align-items:center;gap:6px;color:var(--qmuted)}
       .activity{margin:14px 0 16px;border:1px solid var(--qline);border-radius:16px;padding:14px 16px;background:rgba(255,255,255,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
@@ -213,6 +217,7 @@ function installQuotaWidget(snapshot, options = {}) {
       usageRange={start_date:startInput.value,end_date:endInput.value};
     }
     usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value)};
+    dispatch({kind:'usage',...usageRequest});
     usageDeadline=Date.now()+30000;
     usageError.hidden=true;usageStatus.hidden=false;usageStatus.textContent='正在查询…';rankLoading();
     root.querySelector('.usage-prev').disabled=true;root.querySelector('.usage-next').disabled=true;
@@ -270,6 +275,7 @@ function installQuotaWidget(snapshot, options = {}) {
   }
   function queryActivity() {
     activityRequest={id:++activityId,user:activityUser||null};
+    dispatch({kind:'activity',...activityRequest});
     activityDeadline=Date.now()+30000;
     activityError.hidden=true;activityStatus.hidden=false;activityStatus.textContent='正在加载近 365 天用量…';
     activityLoading();
@@ -422,7 +428,8 @@ function installQuotaWidget(snapshot, options = {}) {
     attributeFilter: ['data-sidebar-collapsed', 'inert', 'hidden', 'aria-hidden'] });
   const timer = setInterval(() => { mount(); paint(); }, 5000);
   root.querySelector('.refresh').addEventListener('click', () => {
-    refreshRequested = true;
+    refreshRequested = ++refreshId;
+    dispatch({kind:'refresh',id:refreshRequested});
     waitingForRefresh = true;
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       root.querySelector('.refresh svg').animate([
@@ -433,7 +440,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 22,
+    version: 25,
     update(value) {
       // An immediate push and the periodic tick can race; never regress to older data.
       if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();
