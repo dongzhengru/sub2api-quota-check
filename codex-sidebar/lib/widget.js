@@ -2,7 +2,7 @@
 function installQuotaWidget(snapshot, options = {}) {
   const KEY = '__zhengruQuotaSidebarV1';
   const HOST = 'zhengru-quota-sidebar';
-  if (window[KEY]?.version !== 19) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 21) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -20,7 +20,7 @@ function installQuotaWidget(snapshot, options = {}) {
   // Some renderer contexts deny storage; toggling still works for this session.
   try { collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch {}
   let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
-  let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '';
+  let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '', activityBusy = false;
   const host = document.createElement('div');
   host.id = HOST;
   host.style.cssText = 'display:block;position:absolute;left:10px;right:10px;bottom:14px;min-width:0;width:auto;z-index:2147483000;-webkit-app-region:no-drag;';
@@ -55,11 +55,14 @@ function installQuotaWidget(snapshot, options = {}) {
       .hm-wrap{position:relative}
       .hm-scroll{overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:rgba(15,23,42,.28) transparent}
       .hm-scroll::-webkit-scrollbar{height:7px}.hm-scroll::-webkit-scrollbar-track{background:rgba(15,23,42,.06);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb{background:rgba(15,23,42,.22);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--qaccent)}
-      .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;width:max-content}
+      .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;width:max-content;min-height:102px}
       .hm-cell{width:12px;height:12px;border-radius:3px;background:rgba(15,23,42,.08)}
       .hm-cell[data-level="1"]{background:#c9def2}.hm-cell[data-level="2"]{background:#8fc0e8}.hm-cell[data-level="3"]{background:#4b93cf}.hm-cell[data-level="4"]{background:#1d64a8}
       .hm-cell.pad{visibility:hidden}.hm-cell[data-date]:hover{outline:1px solid var(--qink);outline-offset:1px}
-      .hm-months{display:grid;gap:3px;width:max-content;margin-top:5px;font-family:var(--qmono);font-size:9px;color:var(--qmuted)}.hm-months span{grid-row:1;white-space:nowrap}
+      .hm-cell.skel,.skel-bar{background:linear-gradient(100deg,rgba(15,23,42,.07) 40%,rgba(15,23,42,.17) 50%,rgba(15,23,42,.07) 60%);background-size:200% 100%;animation:q-sweep 1.1s linear infinite}
+      .skel-bar{display:block;height:10px;border-radius:5px}.hm-summary .skel-bar{width:230px;height:9px}
+      @keyframes q-sweep{from{background-position:200% 0}to{background-position:-200% 0}}
+      .hm-months{display:grid;gap:3px;width:max-content;margin-top:5px;font-family:var(--qmono);font-size:9px;color:var(--qmuted);min-height:11px}.hm-months span{grid-row:1;white-space:nowrap}
       .hm-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:9px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
       .hm-legend{display:flex;align-items:center;gap:3px}.hm-legend .hm-cell{width:10px;height:10px}
       .hm-tip{position:absolute;z-index:5;pointer-events:none;background:var(--qsolid);border:1px solid var(--qedge);border-radius:10px;padding:8px 11px;font-family:var(--qmono);font-size:10px;line-height:1.7;box-shadow:0 12px 30px rgba(2,6,23,.25);white-space:nowrap;color:var(--qmuted)}.hm-tip b{display:block;color:var(--qink)}.hm-tip .hi{color:var(--qink)}
@@ -104,11 +107,11 @@ function installQuotaWidget(snapshot, options = {}) {
     </section>
     <dialog aria-labelledby="usage-title"><div class="dialog-head"><h2 id="usage-title">用户 Token 用量排行</h2><button type="button" class="usage-close" aria-label="关闭用量排行"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
     <section class="activity" aria-label="Token Activity"><div class="activity-head"><h3>Token Activity</h3><div class="activity-controls"><select class="activity-user" aria-label="选择用户"><option value="">全部用户</option></select><div class="seg" role="group" aria-label="统计口径"><button type="button" data-metric="tokens" class="active" aria-pressed="true">Tokens</button><button type="button" data-metric="cost" aria-pressed="false">Cost</button></div></div></div>
-    <p class="activity-status usage-status" role="status" aria-live="polite"></p><p class="activity-error usage-error" role="alert" hidden></p>
+    <p class="activity-status usage-status" role="status" aria-live="polite" hidden></p><p class="activity-error usage-error" role="alert" hidden></p>
     <div class="hm-wrap"><div class="hm-scroll"><div class="hm-grid" role="img" aria-label="近 365 天 Token 活跃热力图"></div><div class="hm-months" aria-hidden="true"></div></div><div class="hm-tip" hidden></div></div>
     <div class="hm-foot"><div class="hm-legend" aria-hidden="true">少 <span class="hm-cell" data-level="0"></span><span class="hm-cell" data-level="1"></span><span class="hm-cell" data-level="2"></span><span class="hm-cell" data-level="3"></span><span class="hm-cell" data-level="4"></span> 多</div><div class="hm-summary"></div></div></section>
     <form class="usage-filters"><div class="seg" role="group" aria-label="快捷日期"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button></div><div class="usage-dates"><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></div></form>
-    <p class="usage-status" role="status" aria-live="polite"></p><p class="usage-error" role="alert" hidden></p>
+    <p class="usage-status rank-status" role="status" aria-live="polite" hidden></p><p class="usage-error rank-error" role="alert" hidden></p>
     <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
     <div class="usage-pages"><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
@@ -195,8 +198,8 @@ function installQuotaWidget(snapshot, options = {}) {
     foot.style.opacity = paused ? '.6' : '';
   }
   const dialog = root.querySelector('dialog');
-  const usageStatus = root.querySelector('.usage-status');
-  const usageError = root.querySelector('.usage-error');
+  const usageStatus = root.querySelector('.rank-status');
+  const usageError = root.querySelector('.rank-error');
   const startInput = root.querySelector('.usage-start'), endInput = root.querySelector('.usage-end');
   function quickRange(days) {
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).formatToParts(new Date()).map(p => [p.type,p.value]));
@@ -211,14 +214,15 @@ function installQuotaWidget(snapshot, options = {}) {
     }
     usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value)};
     usageDeadline=Date.now()+30000;
-    usageError.hidden=true;usageStatus.textContent='正在查询…';root.querySelector('tbody').replaceChildren();
+    usageError.hidden=true;usageStatus.hidden=false;usageStatus.textContent='正在查询…';rankLoading();
     root.querySelector('.usage-prev').disabled=true;root.querySelector('.usage-next').disabled=true;
   }
   function receiveUsage(result) {
     if(result.id!==usageId || !dialog.open)return;
     usageDeadline=0;
-    if(result.error) {usageStatus.textContent='查询失败，请点击查询重试。';usageError.textContent=result.error;usageError.hidden=false;return;}
+    if(result.error) {usageStatus.hidden=false;usageStatus.textContent='查询失败，请点击查询重试。';usageError.textContent=result.error;usageError.hidden=false;root.querySelector('tbody').replaceChildren();return;}
     const data=result.data;usagePage=data.page;
+    root.querySelector('tbody').replaceChildren();
     for(const user of data.users) {
       const row=document.createElement('tr');
       const prompt=user.input_tokens+user.cache_tokens;
@@ -233,7 +237,7 @@ function installQuotaWidget(snapshot, options = {}) {
       }
       root.querySelector('tbody').append(row);
     }
-    usageStatus.textContent=`${data.start_date} 至 ${data.end_date}（含首尾日期，${data.timezone}） · ${data.users.length ? '本页 '+data.users.length+' 位用户':'暂无用量记录'}`;
+    usageStatus.hidden=data.users.length>0;usageStatus.textContent=data.users.length?'':'暂无用量记录';
     root.querySelector('.usage-page').textContent=`第 ${usagePage} 页`;
     root.querySelector('.usage-prev').disabled=usagePage<=1;root.querySelector('.usage-next').disabled=!data.has_more;
   }
@@ -241,26 +245,51 @@ function installQuotaWidget(snapshot, options = {}) {
   const WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
   const fmtTokens=n=>Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US');
   const fmtCost=n=>'$'+n.toFixed(3);
+  function rankLoading() {
+    const frag=document.createDocumentFragment();
+    for(let i=0;i<6;i++){
+      const tr=document.createElement('tr');tr.className='skel-row';
+      for(let c=0;c<8;c++){
+        const td=document.createElement('td'),bar=document.createElement('span');
+        bar.className='skel-bar';bar.style.width=c===0?'72%':'80%';bar.style.animationDelay=(i*.07+c*.03).toFixed(2)+'s';
+        td.append(bar);tr.append(td);
+      }
+      frag.append(tr);
+    }
+    root.querySelector('tbody').replaceChildren(frag);
+  }
+  function activityLoading() {
+    activityBusy=true;
+    const frag=document.createDocumentFragment();
+    for(let col=0;col<53;col++)for(let row=0;row<7;row++){
+      const cell=document.createElement('div');cell.className='hm-cell skel';cell.style.animationDelay=(col*.035+row*.02).toFixed(3)+'s';frag.append(cell);
+    }
+    hmGrid.replaceChildren(frag);hmGrid.setAttribute('aria-busy','true');
+    hmMonths.replaceChildren();hmTip.hidden=true;
+    const bar=document.createElement('span');bar.className='skel-bar';hmSummary.replaceChildren(bar);
+  }
   function queryActivity() {
     activityRequest={id:++activityId,user:activityUser||null};
     activityDeadline=Date.now()+30000;
-    activityError.hidden=true;activityStatus.textContent='正在加载近 365 天用量…';
+    activityError.hidden=true;activityStatus.hidden=false;activityStatus.textContent='正在加载近 365 天用量…';
+    activityLoading();
   }
   function receiveActivity(result) {
     if(result.id!==activityId || !dialog.open)return;
     activityDeadline=0;
-    if(result.error){activityStatus.textContent='加载失败，请重新打开重试。';activityError.textContent=result.error;activityError.hidden=false;return;}
-    activityError.hidden=true;
+    if(result.error){activityBusy=false;activityStatus.hidden=false;activityStatus.textContent='加载失败，请重新打开重试。';activityError.textContent=result.error;activityError.hidden=false;hmGrid.replaceChildren();hmGrid.setAttribute('aria-busy','false');hmMonths.replaceChildren();hmSummary.replaceChildren();hmTip.hidden=true;return;}
+    activityError.hidden=true;activityBusy=false;
     activityData=result.data;
     activitySelect.replaceChildren(new Option('全部用户',''));
     for(const user of activityData.users)activitySelect.append(new Option(user.username?`${user.username} · ${user.email}`:user.email,user.email));
     activitySelect.value=activityUser;
     if(activitySelect.value!==activityUser){activityUser='';activitySelect.value='';}
     renderActivity();
-    activityStatus.textContent=`${activityData.start_date} 至 ${activityData.end_date} · ${activityData.user||'全部用户'} · ${activityData.timezone}`;
+    activityStatus.hidden=true;activityStatus.textContent='';
   }
   function renderActivity() {
-    if(!activityData)return;
+    if(!activityData||activityBusy)return;
+    hmGrid.setAttribute('aria-busy','false');
     const map=new Map(activityData.trend.map(row=>[row.date,row]));
     const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
     const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);
@@ -404,7 +433,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 19,
+    version: 21,
     update(value) { current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status(); }, status,
     receiveUsage,
     takeUsageRequest() {const request=usageRequest;usageRequest=null;return request;},

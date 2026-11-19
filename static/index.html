@@ -9,7 +9,7 @@
  --bg:#0b0e13;--panel:rgba(20,24,31,.6);--panel-solid:#161b22;--line:rgba(255,255,255,.09);
  --ink:#f0f4f8;--muted:#8b949e;--seg:rgba(255,255,255,.06);--seg-active:rgba(255,255,255,.16);
  --accent:#6fd3c0;--warn:#e09563;--danger:#e0705f;--track:rgba(255,255,255,.12);
- --hm0:rgba(255,255,255,.055);--hm1:#1e3d63;--hm2:#2e6da4;--hm3:#5ea3d8;--hm4:#b3e0fa;
+ --hm0:rgba(255,255,255,.055);--hm1:#1e3d63;--hm2:#2e6da4;--hm3:#5ea3d8;--hm4:#b3e0fa;--skel-hi:rgba(255,255,255,.16);
  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
 }
@@ -18,7 +18,7 @@
  --bg:#eef1f4;--panel:rgba(255,255,255,.66);--panel-solid:#fff;--line:rgba(15,23,42,.1);
  --ink:#17222d;--muted:#5c6773;--seg:rgba(15,23,42,.06);--seg-active:rgba(15,23,42,.12);
  --accent:#14907c;--warn:#b05f2c;--danger:#b3402f;--track:rgba(15,23,42,.12);
- --hm0:rgba(15,23,42,.08);--hm1:#c9def2;--hm2:#8fc0e8;--hm3:#4b93cf;--hm4:#1d64a8;
+ --hm0:rgba(15,23,42,.08);--hm1:#c9def2;--hm2:#8fc0e8;--hm3:#4b93cf;--hm4:#1d64a8;--skel-hi:rgba(15,23,42,.18);
 }
 *{box-sizing:border-box}
 body{margin:0;min-height:100svh;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
@@ -97,7 +97,7 @@ tbody tr:hover{background:var(--seg)}
 .hm-scroll::-webkit-scrollbar-track{background:var(--seg);border-radius:99px}
 .hm-scroll::-webkit-scrollbar-thumb{background:var(--track);border-radius:99px}
 .hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--accent)}
-.hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,13px);grid-auto-columns:13px;gap:3px;width:max-content}
+.hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,13px);grid-auto-columns:13px;gap:3px;width:max-content;min-height:109px}
 .hm-cell{width:13px;height:13px;border-radius:3.5px;background:var(--hm0)}
 .hm-cell[data-level="1"]{background:var(--hm1)}
 .hm-cell[data-level="2"]{background:var(--hm2)}
@@ -105,7 +105,10 @@ tbody tr:hover{background:var(--seg)}
 .hm-cell[data-level="4"]{background:var(--hm4)}
 .hm-cell.pad{visibility:hidden}
 .hm-cell[data-date]:hover{outline:1px solid var(--ink);outline-offset:1px}
-.hm-months{display:grid;gap:3px;width:max-content;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.hm-cell.skel,.skel-bar{background:linear-gradient(100deg,var(--hm0) 40%,var(--skel-hi) 50%,var(--hm0) 60%);background-size:200% 100%;animation:sweep 1.1s linear infinite}
+.skel-bar{display:block;height:10px;border-radius:5px}#hm-summary .skel-bar{width:240px;height:9px}
+@keyframes sweep{from{background-position:200% 0}to{background-position:-200% 0}}
+.hm-months{display:grid;gap:3px;width:max-content;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--muted);min-height:14px}
 .hm-months span{grid-row:1;white-space:nowrap}
 .hm-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .hm-legend{display:flex;align-items:center;gap:4px}
@@ -114,7 +117,7 @@ tbody tr:hover{background:var(--seg)}
 .hm-tip b{display:block;color:var(--ink);font-weight:600}
 .hm-tip .hi{color:var(--ink)}
 @media(max-width:660px){main{padding:24px 16px 36px}.cards{grid-template-columns:1fr;gap:16px}.strip{grid-template-columns:1fr}.strip .cell+.cell{border-left:0;border-top:1px solid var(--line)}.quota{padding:22px}.number{font-size:46px}.breakdown{padding:20px}}
-@media(prefers-reduced-motion:reduce){.fill{transition:none}}
+@media(prefers-reduced-motion:reduce){.fill{transition:none}.hm-cell.skel,.skel-bar{animation:none}}
 </style>
 </head>
 <body>
@@ -246,8 +249,8 @@ async function loadStats(page){
  const request=++statsRequest;
  if(statsController)statsController.abort();statsController=new AbortController();
  const status=document.getElementById('stats-status'),error=document.getElementById('stats-error');
- error.hidden=true;status.textContent='正在查询…';
- document.getElementById('stats-body').replaceChildren();
+ error.hidden=true;status.hidden=false;status.textContent='正在查询…';
+ rankLoading();
  document.getElementById('stats-table').setAttribute('aria-busy','true');
  document.getElementById('prev-page').disabled=true;document.getElementById('next-page').disabled=true;
  try{
@@ -258,6 +261,7 @@ async function loadStats(page){
   if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'用户用量查询失败');
   if(request!==statsRequest)return;
   const body=document.getElementById('stats-body');
+  body.replaceChildren();
   for(const user of data.users){
    const row=document.createElement('tr'),identity=document.createElement('td'),id=document.createElement('small');
    identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;identity.append(id);row.append(identity);
@@ -273,8 +277,8 @@ async function loadStats(page){
   }
   statsPage=data.page;document.getElementById('page-label').textContent=`第 ${statsPage} 页`;
   document.getElementById('prev-page').disabled=statsPage<=1;document.getElementById('next-page').disabled=!data.has_more;
-  status.textContent=`${data.start_date} 至 ${data.end_date}（含首尾日期） · ${data.users.length?'本页 '+data.users.length+' 位用户':'暂无用量记录'}`;
- }catch(e){if(request!==statsRequest)return;error.textContent=e.message;error.hidden=false;status.textContent='查询失败，请点击查询重试。';}
+  status.hidden=data.users.length>0;status.textContent=data.users.length?'':'暂无用量记录';
+ }catch(e){if(request!==statsRequest)return;document.getElementById('stats-body').replaceChildren();error.textContent=e.message;error.hidden=false;status.hidden=false;status.textContent='查询失败，请点击查询重试。';}
  finally{if(request===statsRequest)document.getElementById('stats-table').setAttribute('aria-busy','false');}
 }
 document.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{setQuickRange(Number(b.dataset.days));applyRange();}));
@@ -283,14 +287,38 @@ document.getElementById('stats-form').addEventListener('submit',e=>{e.preventDef
 document.getElementById('page-size').addEventListener('change',e=>{statsSize=Number(e.target.value);loadStats(1);});
 document.getElementById('prev-page').addEventListener('click',()=>loadStats(statsPage-1));
 document.getElementById('next-page').addEventListener('click',()=>loadStats(statsPage+1));
-let activityData=null,activityMetric='tokens',activityUser='',activityRequest=0,activityController=null;
+let activityData=null,activityMetric='tokens',activityUser='',activityRequest=0,activityController=null,activityBusy=false;
 const activitySelect=document.getElementById('activity-user'),hmGrid=document.getElementById('hm-grid'),hmMonths=document.getElementById('hm-months'),hmTip=document.getElementById('hm-tip'),hmWrap=document.getElementById('hm-wrap'),hmScroll=document.getElementById('hm-scroll');
 const WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
+function rankLoading(){
+ const frag=document.createDocumentFragment();
+ for(let i=0;i<6;i++){
+  const tr=document.createElement('tr');tr.className='skel-row';
+  for(let c=0;c<8;c++){
+   const td=document.createElement('td'),bar=document.createElement('span');
+   bar.className='skel-bar';bar.style.width=c===0?'72%':'80%';bar.style.animationDelay=(i*.07+c*.03).toFixed(2)+'s';
+   td.append(bar);tr.append(td);
+  }
+  frag.append(tr);
+ }
+ document.getElementById('stats-body').replaceChildren(frag);
+}
+function activityLoading(){
+ activityBusy=true;
+ const frag=document.createDocumentFragment();
+ for(let col=0;col<53;col++)for(let row=0;row<7;row++){
+  const cell=document.createElement('div');cell.className='hm-cell skel';cell.style.animationDelay=(col*.035+row*.02).toFixed(3)+'s';frag.append(cell);
+ }
+ hmGrid.replaceChildren(frag);hmGrid.setAttribute('aria-busy','true');
+ hmMonths.replaceChildren();hmTip.hidden=true;
+ const bar=document.createElement('span');bar.className='skel-bar';document.getElementById('hm-summary').replaceChildren(bar);
+}
 async function loadActivity(){
  const request=++activityRequest;
  if(activityController)activityController.abort();activityController=new AbortController();
  const status=document.getElementById('activity-status'),error=document.getElementById('activity-error');
- error.hidden=true;status.textContent='正在加载近 365 天用量…';
+ error.hidden=true;status.hidden=false;status.textContent='正在加载近 365 天用量…';
+ activityLoading();
  try{
   const params=new URLSearchParams();if(activityUser)params.set('user',activityUser);
   const response=await fetch(apiPrefix+'/api/token-activity?'+params,{cache:'no-store',signal:activityController.signal,headers:{Accept:'application/json'}});
@@ -298,21 +326,25 @@ async function loadActivity(){
   try{data=JSON.parse(raw);}catch(parseError){throw Error(`Token Activity 接口返回了无效数据（HTTP ${response.status}）：${raw.slice(0,120)}`);}
   if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Token Activity 查询失败');
   if(request!==activityRequest)return;
+  activityBusy=false;
   activityData=data;
   activitySelect.replaceChildren(new Option('全部用户',''));
   for(const user of data.users)activitySelect.append(new Option(user.username?`${user.username} · ${user.email}`:user.email,user.email));
   activitySelect.value=activityUser;
   if(activitySelect.value!==activityUser){activityUser='';activitySelect.value='';}
   renderActivity();
-  status.textContent=`${data.start_date} 至 ${data.end_date} · ${data.user||'全部用户'} · ${data.timezone}`;
+  status.hidden=true;status.textContent='';
  }catch(e){
   if(request!==activityRequest)return;
   if(e.name==='AbortError')return;
-  error.textContent=e.message;error.hidden=false;status.textContent='加载失败，请稍后重试。';
+  activityBusy=false;
+  hmGrid.replaceChildren();hmGrid.setAttribute('aria-busy','false');hmMonths.replaceChildren();document.getElementById('hm-summary').replaceChildren();hmTip.hidden=true;
+  error.textContent=e.message;error.hidden=false;status.hidden=false;status.textContent='加载失败，请稍后重试。';
  }
 }
 function renderActivity(){
- if(!activityData)return;
+ if(!activityData||activityBusy)return;
+ hmGrid.setAttribute('aria-busy','false');
  const map=new Map(activityData.trend.map(row=>[row.date,row]));
  const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
  const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);

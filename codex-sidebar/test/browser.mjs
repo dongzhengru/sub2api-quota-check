@@ -28,7 +28,9 @@ const dashboardActivity = { start_date:isoDay(activityStart), end_date:isoDay(ac
   users:[{email:'dzr@sub2api.com',username:'董政儒'},{email:'zzy@sub2api.com',username:''}],
   trend:[activityRow(isoDay(activityEnd),50000000,12.5),activityRow(isoDay(new Date(activityEnd.getTime()-86400000)),1000000,0.4),activityRow(isoDay(new Date(activityEnd.getTime()-2*86400000)),100000,0.05),activityRow(isoDay(new Date(activityEnd.getTime()-3*86400000)),10000,0.001)] };
 const dashboardHtml = await readFile(new URL('../../static/index.html', import.meta.url),'utf8');
+let httpDelay = 0;
 const server = createServer((request, response) => {
+  const send = () => {
   if(request.url.startsWith('/api/')) {
     if (request.url.startsWith('/api/usage')) response.statusCode = dashboardStatus;
     response.setHeader('Content-Type','application/json');
@@ -37,6 +39,8 @@ const server = createServer((request, response) => {
     else if (request.url.startsWith('/api/token-activity')) response.end(JSON.stringify({...dashboardActivity,user:new URL(request.url,'http://localhost').searchParams.get('user')||null}));
     else response.end(JSON.stringify({start_date:'2026-11-10',end_date:'2026-11-10',timezone:'Asia/Shanghai',users:[],page:1,page_size:20,has_more:false}));
   } else { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(request.url==='/dashboard' ? dashboardHtml : '<!doctype html><html><body></body></html>'); }
+  };
+  if (httpDelay && request.url.startsWith('/api/')) setTimeout(send, httpDelay); else send();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -129,6 +133,12 @@ try {
   assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`), null);
   await cdp.evaluate(`${ui}.querySelector('.usage-link').click()`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('dialog').open`), true);
+  assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('.hm-grid .hm-cell.skel').length`),371,'Activity shows a skeleton while loading');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-grid').getAttribute('aria-busy')`),'true');
+  assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('tbody .skel-row').length`),6,'Ranking shows skeleton rows while loading');
+  await cdp.call('Page.enable');
+  const loadingShot=await cdp.call('Page.captureScreenshot',{format:'png'});
+  await writeFile(new URL('preview-loading.png',artifacts),Buffer.from(loadingShot.data,'base64'));
   let query = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
   assert.equal(query.start_date,query.end_date);assert.equal(query.page,1);
   const usageResult = { id:query.id, data:{...query,timezone:'Asia/Shanghai',has_more:true,users:[{user_id:1,email:'<img src=x onerror=alert(1)>',requests:225,input_tokens:1254036,output_tokens:106773,cache_tokens:16050688,total_tokens:17411497,cost:4.57638018}]} };
@@ -137,11 +147,14 @@ try {
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$4.576/);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /92\.8%/);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody .skel-row')===null`),true,'Skeleton rows replaced by results');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.rank-status').hidden`),true,'Ranking summary sentence removed');
   // Token Activity: 365-day heatmap with user filter and Tokens/Cost toggle.
   let activityQuery = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`);
   assert.equal(activityQuery.user,null);
   const activityResult = {id:activityQuery.id,data:{...dashboardActivity,users:[{email:'dzr@sub2api.com',username:'<img src=x onerror=alert(1)>'},{email:'zzy@sub2api.com',username:''}]}};
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify(activityResult)})`);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-status').hidden`),true,'Activity range sentence removed');
   const cellCount = await cdp.evaluate(`${ui}.querySelectorAll('.hm-grid .hm-cell').length`);
   assert.ok(cellCount>=365 && cellCount<=371 && cellCount%7===0, `Heatmap cell count: ${cellCount}`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]')!==null`),true);
@@ -163,6 +176,8 @@ try {
   assert.match(await cdp.evaluate(`${ui}.querySelector('.activity-status').textContent`),/正在加载/,'Late activity results do not overwrite the newest filter');
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify({id:activityQuery.id,error:'模拟活动查询失败'})})`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-error').textContent`),'模拟活动查询失败');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-grid').children.length`),0,'Activity error clears the skeleton');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-status').hidden`),false,'Activity error keeps visible feedback');
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify({...activityResult,id:activityQuery.id,data:{...activityResult.data,user:'dzr@sub2api.com'}})})`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity-error').hidden`),true);
   await cdp.evaluate(`${ui}.querySelector('[data-metric="tokens"]').click()`);
@@ -173,9 +188,10 @@ try {
   assert.equal(weekQuery.page,1);assert.equal((Date.parse(weekQuery.end_date)-Date.parse(weekQuery.start_date))/86400000,6);
   // Late results must not overwrite the latest filter.
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
-  assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody').children.length`),0);
+  assert.equal(await cdp.evaluate(`${ui}.querySelectorAll('tbody tr:not(.skel-row)').length`),0);
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody .skel-row')!==null`),true,'Stale results leave the loading skeleton');
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({id:weekQuery.id,error:'模拟查询失败'})})`);
-  assert.equal(await cdp.evaluate(`${ui}.querySelector('.usage-error').textContent`),'模拟查询失败');
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.rank-error').textContent`),'模拟查询失败');
   await cdp.evaluate(`${ui}.querySelector('.usage-filters').requestSubmit()`);
   query=await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({...usageResult,id:query.id,data:{...usageResult.data,...query}})})`);
@@ -282,18 +298,29 @@ try {
   }
   assert.ok(activityReady,'Dashboard renders the Token Activity heatmap');
   assert.match(await cdp.evaluate(`document.getElementById('hm-summary').textContent`),/近 365 天/);
+  assert.equal(await cdp.evaluate(`document.getElementById('stats-status').textContent`),'暂无用量记录');
+  assert.equal(await cdp.evaluate(`document.getElementById('stats-status').hidden`),false);
   assert.equal(await cdp.evaluate(`document.getElementById('activity-user').options.length`),3);
   assert.equal(await cdp.evaluate(`document.querySelector('#hm-grid .hm-cell[data-level="4"]')!==null`),true);
   await cdp.evaluate(`document.querySelector('[data-metric="cost"]').click()`);
   assert.match(await cdp.evaluate(`document.getElementById('hm-grid').getAttribute('aria-label')`),/费用/);
   await cdp.evaluate(`document.querySelector('[data-metric="tokens"]').click()`);
+  httpDelay = 1200;
   await cdp.evaluate(`document.getElementById('activity-user').value='dzr@sub2api.com';document.getElementById('activity-user').dispatchEvent(new Event('change'))`);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(await cdp.evaluate(`document.querySelectorAll('#hm-grid .hm-cell.skel').length`),371,'Dashboard shows skeleton while switching user');
+  await cdp.evaluate(`document.getElementById('activity-title').scrollIntoView({block:'center'})`);
+  const dashLoadingShot=await cdp.call('Page.captureScreenshot',{format:'png'});
+  await writeFile(new URL('preview-dashboard-loading.png',artifacts),Buffer.from(dashLoadingShot.data,'base64'));
+  await cdp.evaluate(`scrollTo(0,0)`);
+  httpDelay = 0;
   let dashboardUserReady=false;
   for(let i=0;i<60&&!dashboardUserReady;i++){
-    dashboardUserReady=await cdp.evaluate(`document.getElementById('activity-status').textContent.includes('dzr@sub2api.com')`);
+    dashboardUserReady=await cdp.evaluate(`document.getElementById('hm-grid').getAttribute('aria-busy')==='false'`);
     if(!dashboardUserReady)await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.ok(dashboardUserReady,'Dashboard heatmap refetches for the selected user');
+  assert.equal(await cdp.evaluate(`document.getElementById('activity-status').hidden`),true);
   await cdp.evaluate(`document.getElementById('activity-user').value='';document.getElementById('activity-user').dispatchEvent(new Event('change'))`);
   assert.match(await cdp.evaluate(`document.getElementById('reset-card-expiry').textContent`),/^(最近到期 )?\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal((await cdp.evaluate(`document.getElementById('reset-card-expiry').title`)).split('\n').length,3);
