@@ -14,7 +14,12 @@ export function validateUsage(data) {
     }
     windows[key] = pickWindow(w);
   }
-  if (!windows.five_hour && !windows.seven_day) throw new Error('额度响应缺少有效额度窗口');
+  if (!windows.five_hour && !windows.seven_day) {
+    const balance = data.credits?.balance;
+    const hasBalance = (typeof balance === 'number' || (typeof balance === 'string' && balance.trim() !== '')) && Number.isFinite(Number(balance));
+    const creditsOnly = data.five_hour === null && data.seven_day === null && (hasBalance || data.credits?.unlimited === true);
+    if (!creditsOnly) throw new Error('额度响应缺少有效额度窗口');
+  }
   // Only transfer fields the widget actually needs into the renderer.
   return {
     five_hour: windows.five_hour, seven_day: windows.seven_day,

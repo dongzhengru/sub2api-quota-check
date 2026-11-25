@@ -91,6 +91,15 @@ try {
   assert.match(await cdp.evaluate(`${creditUI}.getElementById('reset-card-expiry').textContent`), /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal((await cdp.evaluate(`${creditUI}.getElementById('reset-card-expiry').title`)).split('\n').length, 3);
   assert.equal(await cdp.evaluate(`${creditUI}.getElementById('credit-balance').textContent`), '12.346');
+  const shortWindow = `${creditUI}.querySelector('[data-window="five_hour"]')`;
+  await inject({ ...snapshot, data: { ...snapshot.data, five_hour: null } });
+  assert.equal(await cdp.evaluate(`${shortWindow}.querySelector('b').textContent`), '—');
+  assert.equal(await cdp.evaluate(`${shortWindow}.hidden`), true);
+  assert.equal(await cdp.evaluate(`${shortWindow}.querySelector('time').textContent`), '');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('[data-gauge="five_hour"]').style.strokeDashoffset`), '100');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('[data-window="seven_day"] b').textContent`), '68%');
+  await inject(snapshot);
+  assert.equal(await cdp.evaluate(`${shortWindow}.hidden`), false);
   assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.summary img')`), null);
   await inject({...snapshot,data:{...snapshot.data,credits:{balance:null,unlimited:false}}});
   assert.equal(await cdp.evaluate(`${creditUI}.getElementById('credit-balance').textContent`), '—');

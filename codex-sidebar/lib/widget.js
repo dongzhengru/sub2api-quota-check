@@ -5,7 +5,8 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  if (window[KEY]?.version !== 33) window[KEY]?.dispose();
+  const version = 34;
+  if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
     return window[KEY].status();
@@ -26,6 +27,7 @@ function installQuotaWidget(snapshot, options = {}) {
   let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '', activityBusy = false, activityDay = null;
   const host = document.createElement('div');
   host.id = HOST;
+  host.toggleAttribute('data-windows', /^Win/i.test(navigator.platform));
   host.style.cssText = 'display:block;position:absolute;left:10px;right:10px;bottom:14px;min-width:0;width:auto;z-index:2147483000;-webkit-app-region:no-drag;';
   const root = host.attachShadow({ mode: 'open' });
   // 外观默认跟随系统深浅色，助手可强制浅色／深色；切换无需重新挂载
@@ -111,6 +113,25 @@ function installQuotaWidget(snapshot, options = {}) {
       .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid var(--qline)}.summary-item{min-width:0}.summary-label{font-family:var(--qmono);font-size:9px;letter-spacing:.1em;opacity:.7}.summary-value{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-family:var(--qmono);font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail.expiry{color:inherit;opacity:.9}.summary-detail[title]{cursor:help}
       .credits{margin-top:6px;font-family:var(--qmono);font-size:9px;border-top:1px solid var(--qline);padding-top:5px}.credits[hidden]{display:none}.credits summary{cursor:pointer;overflow-wrap:anywhere}.credits-list{margin-top:5px;display:grid;gap:6px}.credit-expiry{display:block;opacity:.65}.credit-warning{color:#df8842;opacity:1}
       .foot{margin-top:5px;font-family:var(--qmono);font-size:10px;color:#df8842}.foot[hidden]{display:none}.stale .fill{opacity:.45}
+      :host([data-windows]){
+        font-family:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",sans-serif;
+        --qmuted:light-dark(#555e65,#b9c3ca);
+        --qsolid:light-dark(#fcfcfc,#24282c);--qbg:var(--qsolid);--qhead:var(--qsolid);
+        --qline:light-dark(#d8dde0,#42494f);--qedge:var(--qline);
+        --qseg:light-dark(#eef2f3,#343a40);--qradius:10px;--qshadow:0 2px 8px #0002
+      }
+      :host([data-windows]) :is(.card,dialog){backdrop-filter:none}
+      :host([data-windows]) :is(.card,dialog)::before,:host([data-windows]) :is(.card,dialog)::after{display:none}
+      :host([data-windows]) .card{padding:8px 11px;animation:none}
+      :host([data-windows]) .title{font-family:inherit;font-size:13px;letter-spacing:normal}
+      :host([data-windows]) :is(.name,.summary-label){color:var(--qmuted);font-family:inherit;font-size:11px;letter-spacing:normal;opacity:1}
+      :host([data-windows]) .refresh{width:26px;height:26px;opacity:.85}
+      :host([data-windows]) .usage-link{padding:4px;font-size:11px;opacity:.85}
+      :host([data-windows]) .reset{flex-wrap:wrap;color:var(--qmuted);opacity:1}
+      :host([data-windows]) .foot{overflow-wrap:anywhere;color:light-dark(#904600,#ffc181)}
+      :host([data-windows]) .fill{box-shadow:none}
+      :host([data-windows]) .seg button.active{background:var(--qsolid);box-shadow:0 1px 3px #0003}
+      :host([data-windows]) .activity{background:var(--qseg);box-shadow:none}
       @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.fill{transition:none}.gauge .gfill{transition:none}.refresh svg{animation:none!important}}
     </style>
     <svg class="lg-defs" width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute"><defs>
@@ -224,7 +245,19 @@ function installQuotaWidget(snapshot, options = {}) {
       const w = current?.data?.[key];
       const row = root.querySelector(`[data-window="${key}"]`);
       row.hidden = !!current?.data && !w;
-      if (!w) continue;
+      const track = row.querySelector('.track');
+      const time = row.querySelector('time');
+      if (!w) {
+        row.querySelector('b').textContent = '—';
+        row.title = '';
+        time.textContent = row.querySelector('.countdown').textContent = '';
+        time.removeAttribute('datetime');
+        track.removeAttribute('aria-valuenow');
+        track.removeAttribute('aria-valuetext');
+        row.querySelector('.fill').style.width = '0%';
+        for (const gauge of root.querySelectorAll('[data-gauge="' + key + '"]')) gauge.style.strokeDashoffset = '100';
+        continue;
+      }
       const remaining = Math.max(0, Math.min(100, w.remaining_percent));
       row.querySelector('b').textContent = formatPercent(w.remaining_percent);
       row.querySelector('.fill').style.width = `${remaining}%`;
@@ -233,11 +266,11 @@ function installQuotaWidget(snapshot, options = {}) {
         gauge.style.strokeDashoffset = String(100 - remaining);
         gauge.style.stroke = critical(remaining);
       }
-      row.querySelector('.track').setAttribute('aria-valuenow', String(remaining));
-      row.querySelector('.track').setAttribute('aria-valuetext', `剩余 ${formatPercent(w.remaining_percent)}，已用 ${formatPercent(w.used_percent)}`);
-      row.querySelector('time').textContent = exactDate(w.resets_at);
-      row.querySelector('time').dateTime = w.resets_at;
-      row.querySelector('time').title = '北京时间';
+      track.setAttribute('aria-valuenow', String(remaining));
+      track.setAttribute('aria-valuetext', `剩余 ${formatPercent(w.remaining_percent)}，已用 ${formatPercent(w.used_percent)}`);
+      time.textContent = exactDate(w.resets_at);
+      time.dateTime = w.resets_at;
+      time.title = '北京时间';
       row.querySelector('.countdown').textContent = countdown(w.resets_at);
       row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置`;
     }
@@ -250,10 +283,11 @@ function installQuotaWidget(snapshot, options = {}) {
     root.getElementById('credit-balance').textContent = current?.data?.credits?.unlimited ? '无限' : Number.isFinite(balance) ? balance.toFixed(3) : '—';
     const foot = root.getElementById('foot');
     const paused = quiet && !stale;
-    foot.hidden = !stale && !paused;
-    foot.textContent = stale ? (current?.data ? '更新失败 · 当前为上次数据' : '暂时无法查询额度，请检查后台连接')
-      : paused ? '凌晨 2:00–8:30 已暂停自动刷新 · 可点击手动刷新' : '';
-    foot.title = stale ? (current?.error || '本机额度程序已断开') : '';
+    const reason = disconnected ? '后台连接已断开' : current?.error || '额度数据尚未更新';
+    foot.hidden = !stale && !paused && !loading;
+    foot.textContent = stale ? reason + (current?.data ? ' · 显示上次数据' : ' · 请点击刷新重试')
+      : loading ? '正在查询额度…' : paused ? '凌晨 2:00–8:30 已暂停自动刷新 · 可点击手动刷新' : '';
+    foot.title = stale ? reason : '';
     foot.style.color = paused ? 'inherit' : '';
     foot.style.opacity = paused ? '.6' : '';
   }
@@ -594,7 +628,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 33,
+    version,
     update(value, opts) {
       if (opts) setTheme(opts.theme);
       // An immediate push and the periodic tick can race; never regress to older data.

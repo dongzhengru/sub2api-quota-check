@@ -38,6 +38,19 @@ test('Pro accounts report only the seven-day window', () => {
   assert.throws(() => validateUsage(empty), /额度窗口/);
 });
 
+test('explicitly unavailable windows do not discard reported quota or credits', () => {
+  const base = { ...sample(), credits: { balance: '12.34' } };
+  for (const key of ['five_hour', 'seven_day']) {
+    const result = validateUsage({ ...base, [key]: null });
+    const other = key === 'five_hour' ? 'seven_day' : 'five_hour';
+    assert.equal(result[key], null);
+    assert.deepEqual(result[other], base[other]);
+    assert.equal(result.credits.balance, '12.34');
+  }
+  assert.equal(validateUsage({ ...base, five_hour: null, seven_day: null }).credits.balance, '12.34');
+  assert.throws(() => validateUsage({}), /额度窗口/);
+});
+
 test('HTTP failure never becomes a successful quota response', async () => {
   await assert.rejects(fetchUsage({ fetcher: async (url, options) => {
     assert.equal(url, ENDPOINT); assert.equal(options.redirect, 'error');
