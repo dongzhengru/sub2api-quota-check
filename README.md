@@ -1,6 +1,6 @@
 # Sub2API 额度面板
 
-Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天额度的已使用比例、剩余比例、下次重置时间和倒计时。Pro 账号没有 5 小时窗口：上游缺失或字段异常时 `/api/usage` 的 `five_hour` 返回 `null`，额度卡片自动隐藏并由 7 天卡片独占一行，侧栏折叠态的额度图案也换成整圆。
+Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天额度的已使用比例、剩余比例、下次重置时间和倒计时。Pro 账号没有 5 小时窗口：上游缺失或字段异常时 `/api/usage` 的 `five_hour` 返回 `null`，额度卡片自动隐藏并由 7 天卡片独占一行，侧栏折叠态的额度图案也换成整圆。`SUB2API_SHOW_FIVE_HOUR=false` 可随时关掉 5 小时窗口，效果与 Pro 账号一致。
 
 ## 重置卡到期时间
 
@@ -79,6 +79,7 @@ docker run -d --name sub2api-usage \
 | SUB2API_PASSWORD | 登录密码 | 无 |
 | SUB2API_ACCOUNT_ID | 被查询账号 ID | 1 |
 | SUB2API_TIMEZONE | 上游和页面使用的时区 | Asia/Shanghai |
+| SUB2API_SHOW_FIVE_HOUR | 是否显示 5 小时窗口；设为 `false`/`0`/`no`/`off` 时 `/api/usage` 的 `five_hour` 返回 `null`，页面与侧栏一起隐藏 | true |
 
 示例中的登录返回 `role=user`，查询示例却使用管理员令牌。`/api/v1/admin/accounts/1/usage` 通常需要管理员权限；如果返回 403，请配置具有该接口访问权限的账号。前端会展示明确的权限错误。页面查询的是配置的固定账号，不是访问者各自的账号。
 

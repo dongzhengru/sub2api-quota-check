@@ -26,12 +26,13 @@ WINDOW_KEYS = ('five_hour', 'seven_day')
 
 
 class UsageService:
-    def __init__(self, client, email, password, account_id=1, tz='Asia/Shanghai'):
+    def __init__(self, client, email, password, account_id=1, tz='Asia/Shanghai', show_five_hour=True):
         self.client = client
         self.email = email
         self.password = password
         self.account_id = account_id
         self.tz = tz
+        self.show_five_hour = show_five_hour
         self.token = None
         self.token_deadline = 0.0
         self.cached = None
@@ -253,6 +254,9 @@ class UsageService:
                 continue
             data = self.unpack(response)
             windows = {key: self.parse_window(data.get(key)) for key in WINDOW_KEYS}
+            if not self.show_five_hour:
+                # 关闭开关时按 Pro 账号一样处理，前端与侧栏沿用隐藏 5 小时卡片的逻辑。
+                windows['five_hour'] = None
             if not windows['seven_day']:
                 raise HTTPException(502, '上游未返回有效的 7 天额度。')
             reset_credits, credits = await self.fetch_openai_quota()
@@ -358,6 +362,7 @@ async def lifespan(app):
         app.state.usage = UsageService(
             client, os.getenv('SUB2API_EMAIL'), os.getenv('SUB2API_PASSWORD'),
             int(os.getenv('SUB2API_ACCOUNT_ID', '1')), os.getenv('SUB2API_TIMEZONE', 'Asia/Shanghai'),
+            os.getenv('SUB2API_SHOW_FIVE_HOUR', 'true').strip().lower() not in {'0', 'false', 'no', 'off'},
         )
         yield
 

@@ -101,6 +101,29 @@ def test_pro_account_without_five_hour_window(five_hour):
     asyncio.run(run())
 
 
+def test_five_hour_window_switch():
+    async def handler(request):
+        if request.url.path.endswith('/login'):
+            return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test', 'expires_in': 86400}})
+        if request.url.path.endswith('/quota/refresh'):
+            return httpx.Response(200, json={'code': 0, 'data': {'rate_limit_reset_credits': {'available_count': 0, 'credits': []}, 'credits': {'balance': '0'}}})
+        return httpx.Response(200, json=payload())
+
+    async def run():
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            data = await UsageService(client, 'test', 'test', show_five_hour=False).get()
+            assert data['five_hour'] is None
+            assert data['seven_day']['remaining_percent'] == 74
+            assert (await UsageService(client, 'test', 'test').get())['five_hour']['remaining_percent'] == 93
+    asyncio.run(run())
+
+    for value, expected in (('false', False), ('OFF', False), ('0', False), ('no', False),
+                            ('true', True), ('Yes', True), ('', True)):
+        with patch.dict('os.environ', {'SUB2API_SHOW_FIVE_HOUR': value}):
+            with TestClient(app):
+                assert app.state.usage.show_five_hour is expected
+
+
 def test_missing_seven_day_window_fails():
     async def run():
         async def handler(request):
