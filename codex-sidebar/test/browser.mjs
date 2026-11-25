@@ -77,7 +77,7 @@ try {
     ]},
     fetched_at: new Date(now).toISOString(),
   }, receivedAt: now, error: null, loading: false };
-  const inject = data => cdp.evaluate(`(${widget})(${JSON.stringify(data)})`);
+  const inject = (data, options = {}) => cdp.evaluate(`(${widget})(${JSON.stringify(data)}, ${JSON.stringify(options)})`);
   // The previous widget used version 7. Updating must replace the live copy
   // so the new reset-card and credit summary actually appears after a reload.
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1 = {version:7,update(){},status(){return {mounted:false}},dispose(){window.__oldQuotaDisposed=true;delete window.__zhengruQuotaSidebarV1;}}`);
@@ -298,8 +298,47 @@ try {
   const screenshot = await cdp.call('Page.captureScreenshot', { format: 'png' });
   await writeFile(new URL('preview.png', artifacts), Buffer.from(screenshot.data, 'base64'));
   await cdp.evaluate(`document.body.style.background = '#202020'; document.body.style.color = '#eee'; document.getElementById('app-shell-sidebar').style.background = '#171717'`);
+  // 系统外观切到深色：卡片即时换肤，不需要重新挂载
+  const settle = async () => { await new Promise(r => setTimeout(r, 500)); };
+  await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+  const themed = `document.getElementById('zhengru-quota-sidebar')`;
+  assert.equal(await waitUntil(`${themed}.dataset.theme === 'dark'`), true, 'Widget follows the system dark appearance');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${themed}).colorScheme`), 'dark', 'Native controls inside the dialog turn dark too');
+  await settle();
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('.card')).color`), 'rgb(232, 238, 245)', 'Dark ink replaces the light palette');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('[data-window="seven_day"] .fill')).backgroundColor`), 'rgb(46, 196, 166)', 'Progress fill follows the dark accent');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('.gauge .gtrack')).stroke`), 'rgba(255, 255, 255, 0.16)', 'Gauge track stays visible on dark glass');
   const dark = await cdp.call('Page.captureScreenshot', { format: 'png' });
   await writeFile(new URL('preview-dark.png', artifacts), Buffer.from(dark.data, 'base64'));
+  // A fresh install must read the current appearance immediately.
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
+  await inject(snapshot);
+  assert.equal(await cdp.evaluate(`${themed}.dataset.theme`), 'dark', 'First paint under a dark system is already dark');
+  // 助手可强制浅色／深色覆盖系统外观，改回自动后重新跟随系统
+  await inject(snapshot, { theme: 'light' });
+  assert.equal(await cdp.evaluate(`${themed}.dataset.theme`), 'light', 'A forced light appearance overrides the dark system');
+  await inject(snapshot, { theme: 'dark' });
+  assert.equal(await cdp.evaluate(`${themed}.dataset.theme`), 'dark', 'A forced appearance applies to the live card without a remount');
+  await inject(snapshot, { theme: 'auto' });
+  assert.equal(await cdp.evaluate(`${themed}.dataset.theme`), 'dark', 'Auto appearance follows the system again');
+  // 深色下的用量弹窗：热力图色阶与原生控件一起换色
+  await cdp.evaluate(`${ui}.querySelector('.usage-link').click()`);
+  const darkUsage = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
+  const darkActivity = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`);
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify({ id: darkUsage.id, data: { ...usageResult.data, ...darkUsage } })})`);
+  await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveActivity(${JSON.stringify({ ...activityResult, id: darkActivity.id })})`);
+  await settle();
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('.hm-cell[data-level="4"]')).backgroundColor`), 'rgb(179, 224, 250)', 'Dark heatmap ramp replaces the light blues');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('.hm-cell[data-level="1"]')).backgroundColor`), 'rgb(30, 61, 99)', 'Low activity stays readable on dark glass');
+  const darkUsageShot = await cdp.call('Page.captureScreenshot', { format: 'png' });
+  await writeFile(new URL('preview-dark-usage.png', artifacts), Buffer.from(darkUsageShot.data, 'base64'));
+  await cdp.evaluate(`${ui}.querySelector('.usage-close').click()`);
+  assert.ok(await waitUntil(`!${ui}.querySelector('dialog').open`), 'Dark dialog closes normally');
+  await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+  assert.equal(await waitUntil(`${themed}.dataset.theme === 'light'`), true, 'Widget follows the system light appearance');
+  await settle();
+  assert.equal(await cdp.evaluate(`getComputedStyle(${ui}.querySelector('.card')).color`), 'rgb(16, 29, 41)', 'Light palette returns when the system switches back');
+  await cdp.evaluate(`document.body.style.background = ''; document.body.style.color = ''; document.getElementById('app-shell-sidebar').style.background = ''`);
   // Even if the daemon dies before the first response, the initial spinner
   // must turn into an actionable error, rather than spin forever.
   await inject({ data: null, error: null, receivedAt: null, loading: true });

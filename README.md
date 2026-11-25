@@ -16,7 +16,7 @@ Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天
 
 ## Codex 常驻额度侧栏
 
-支持 Windows 和 macOS 的本机 CDP 侧栏，直接查询已部署的额度接口，无需启动本项目后端。Windows 双击根目录 **启动额度侧栏.cmd**，自动识别 Microsoft Store 版或常见安装位置的 Codex / ChatGPT；停止和检查分别使用 **停止额度侧栏.cmd**、**查看额度状态.cmd**。需要 Node.js 22+；首次启动前先完全退出客户端。macOS 仍可使用原生菜单栏助手或 `.command` 启动器。详见 [侧栏使用说明](codex-sidebar/README.md)。
+支持 Windows 和 macOS 的本机 CDP 侧栏，直接查询已部署的额度接口，无需启动本项目后端。卡片默认跟随系统深浅色，macOS 菜单栏助手的 **外观** 可固定浅色或深色。Windows 双击根目录 **启动额度侧栏.cmd**，自动识别 Microsoft Store 版或常见安装位置的 Codex / ChatGPT；停止和检查分别使用 **停止额度侧栏.cmd**、**查看额度状态.cmd**。需要 Node.js 22+；首次启动前先完全退出客户端。macOS 仍可使用原生菜单栏助手或 `.command` 启动器。详见 [侧栏使用说明](codex-sidebar/README.md)。
 
 ## 运行
 

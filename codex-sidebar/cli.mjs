@@ -20,6 +20,20 @@ const STATE = process.env.CODEX_QUOTA_STATE_DIR ? path.resolve(process.env.CODEX
   bundled ? path.join(homedir(), 'Library/Application Support/CodexQuotaSidebar') : path.join(ROOT, '.state');
 const STATE_FILE = path.join(STATE, 'daemon.json');
 const LOG = path.join(STATE, 'sidebar.log');
+const THEME_FILE = path.join(STATE, 'theme.json');
+const THEME_LABELS = { auto: '跟随系统', light: '浅色', dark: '深色' };
+async function readTheme() {
+  try {
+    const value = JSON.parse(await readFile(THEME_FILE, 'utf8'))?.theme;
+    return THEME_LABELS[value] ? value : 'auto';
+  } catch { return 'auto'; }
+}
+async function writeTheme(value) {
+  if (!THEME_LABELS[value]) throw new Error(`未知外观：${value}；可选 auto、light、dark`);
+  await mkdir(STATE, { recursive: true, mode: 0o700 });
+  await writeFile(THEME_FILE, JSON.stringify({ theme: value }), { mode: 0o600 });
+  return value;
+}
 const CLI = fileURLToPath(import.meta.url);
 const args = process.argv.slice(2);
 const command = args.shift() || 'help';
@@ -182,6 +196,12 @@ async function main() {
       break;
     }
     case 'start': await start(); break;
+    case 'theme': {
+      const requested = args[0] || option('theme');
+      const value = requested ? await writeTheme(requested) : await readTheme();
+      console.log(`外观：${THEME_LABELS[value]}`);
+      break;
+    }
     case 'launch': await launch(); console.log('客户端 CDP 已就绪'); break;
     case 'run': {
       const controller = new AbortController();
@@ -194,7 +214,7 @@ async function main() {
       process.once('SIGINT', () => controller.abort());
       const log = message => console.log(`${new Date().toISOString()} ${message}`);
       log(`额度侧栏后台已启动，CDP 127.0.0.1 端口 ${ports.join(', ')}`);
-      try { await runDaemon({ ports, selector: option('selector'), signal: controller.signal, log }); }
+      try { await runDaemon({ ports, selector: option('selector'), theme: readTheme, signal: controller.signal, log }); }
       finally {
         if (stopTimer) clearInterval(stopTimer);
         if (stopFile) await unlink(stopFile).catch(() => {});
@@ -213,16 +233,18 @@ async function main() {
       const pages = endpoints.reduce((total, value) => total + value.pages, 0);
       const activePort = endpoints.find(value => value.connected)?.port || port;
       const error = connected ? null : endpoints.map(value => `${value.port}: ${value.error}`).join('；');
+      const appearance = await readTheme();
       if (args.includes('--json')) {
-        console.log(JSON.stringify({ running, connected, pages, endpoints, port: activePort, pid: running ? state.pid : null, log: LOG, error }));
+        console.log(JSON.stringify({ running, connected, pages, endpoints, port: activePort, pid: running ? state.pid : null, log: LOG, error, theme: appearance }));
       } else {
         console.log(running ? `后台运行中（PID ${state.pid}）` : '后台未运行');
         console.log(connected ? `CDP 本机端口 ${activePort} 正常；可连接的应用页面：${pages}` : `CDP 未就绪：${error}`);
+        console.log(`外观：${THEME_LABELS[appearance]}`);
         console.log(`日志：${LOG}`);
       }
       break;
     }
-    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch|check-update|update [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--restart-client] [--json]');
+    default: console.log('用法：node cli.mjs start|stop|status|doctor|run|launch|theme [auto|light|dark]|check-update|update [--port 9341,9342] [--app 客户端路径] [--selector CSS选择器] [--attach-only|--watch] [--restart-client] [--json]');
   }
 }
 main().catch(error => { console.error(error.message); process.exitCode = error.exitCode || 1; });

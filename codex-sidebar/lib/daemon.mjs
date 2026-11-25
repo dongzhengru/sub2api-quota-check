@@ -68,12 +68,14 @@ export async function runDaemon({ ports, port, poller = new UsagePoller(), ...op
     log: message => (options.log || console.log)(`[${port}] ${message}`) })));
 }
 
-async function runEndpoint({ port, selector, signal, poller, log, dependencies = {} }) {
+async function runEndpoint({ port, selector, theme = async () => 'auto', signal, poller, log, dependencies = {} }) {
   const verify = dependencies.verify || assertAppListener;
   const targetsForPort = dependencies.targets || listTargets;
   const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
-  const inject = (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector }) }) }`);
+  // The appearance choice lives in the state file, so the menu can switch a running
+  // card without restarting the daemon.
+  const inject = async (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector, theme: await theme() }) }) }`);
   const usageFetch = dependencies.usageFetch || fetchUserBreakdown;
   const activityFetch = dependencies.activityFetch || fetchTokenActivity;
   const sessions = new Map();

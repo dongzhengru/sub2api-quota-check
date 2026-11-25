@@ -5,9 +5,9 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  if (window[KEY]?.version !== 32) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 33) window[KEY]?.dispose();
   if (window[KEY]) {
-    window[KEY].update(snapshot);
+    window[KEY].update(snapshot, options);
     return window[KEY].status();
   }
   let current = snapshot;
@@ -28,13 +28,27 @@ function installQuotaWidget(snapshot, options = {}) {
   host.id = HOST;
   host.style.cssText = 'display:block;position:absolute;left:10px;right:10px;bottom:14px;min-width:0;width:auto;z-index:2147483000;-webkit-app-region:no-drag;';
   const root = host.attachShadow({ mode: 'open' });
+  // 外观默认跟随系统深浅色，助手可强制浅色／深色；切换无需重新挂载
+  const colorScheme = window.matchMedia('(prefers-color-scheme: dark)');
+  let forcedTheme = null;
+  const applyScheme = () => { host.dataset.theme = forcedTheme || (colorScheme.matches ? 'dark' : 'light'); };
+  const setTheme = value => {
+    const next = value === 'light' || value === 'dark' ? value : null;
+    if (next === forcedTheme) return;
+    forcedTheme = next;
+    applyScheme();
+  };
+  applyScheme();
+  colorScheme.addEventListener('change', applyScheme);
+  setTheme(options.theme);
   root.innerHTML = `
     <style>
-      :host{font-family:inherit;font-size:12px;color-scheme:light;--qmono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--qink:#101d29;--qmuted:rgba(16,29,41,.6);--qbg:linear-gradient(165deg,rgba(255,255,255,.88),rgba(255,255,255,.78));--qsolid:#fff;--qhead:rgba(255,255,255,.66);--qline:rgba(255,255,255,.55);--qedge:rgba(15,23,42,.14);--qtrack:rgba(15,23,42,.13);--qseg:rgba(255,255,255,.5);--qaccent:#12a48c;--qradius:26px;--qshadow:0 26px 56px rgba(2,6,23,.3),0 10px 22px rgba(2,6,23,.18);--qbounce:cubic-bezier(.34,1.56,.64,1)}
+      :host{font-family:inherit;font-size:12px;color-scheme:light;--qmono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--qink:#101d29;--qmuted:rgba(16,29,41,.6);--qbg:linear-gradient(165deg,rgba(255,255,255,.88),rgba(255,255,255,.78));--qsolid:#fff;--qhead:rgba(255,255,255,.66);--qline:rgba(255,255,255,.55);--qedge:rgba(15,23,42,.14);--qtrack:rgba(15,23,42,.13);--qseg:rgba(255,255,255,.5);--qaccent:#12a48c;--qglow:rgba(18,164,140,.5);--qradius:26px;--qshadow:0 26px 56px rgba(2,6,23,.3),0 10px 22px rgba(2,6,23,.18);--qbounce:cubic-bezier(.34,1.56,.64,1);--qbright:1.03;--qlens:linear-gradient(125deg,transparent 30%,rgba(255,255,255,.4) 46%,rgba(255,255,255,.04) 58%,transparent 72%),radial-gradient(120% 120% at 50% 50%,transparent 72%,rgba(255,255,255,.3) 90%,rgba(150,180,255,.18) 100%);--qlens-opacity:.6;--qglass:inset 0 1px 0 rgba(255,255,255,.9),inset 0 0 0 1px rgba(255,255,255,.32),inset 0 8px 20px rgba(255,255,255,.34),inset 0 -12px 24px rgba(15,23,42,.05);--qseg-bg:rgba(15,23,42,.05);--qseg-shadow:inset 0 1px 3px rgba(15,23,42,.08);--qactive-bg:linear-gradient(180deg,#fff,rgba(255,255,255,.72));--qactive-shadow:0 3px 8px rgba(2,6,23,.14),inset 0 1px 0 #fff;--qpanel-bg:rgba(255,255,255,.34);--qpanel-shadow:inset 0 1px 0 rgba(255,255,255,.5);--qinset:inset 0 1px 2px rgba(15,23,42,.2);--qskel:linear-gradient(100deg,rgba(15,23,42,.07) 40%,rgba(15,23,42,.17) 50%,rgba(15,23,42,.07) 60%);--qscroll:rgba(15,23,42,.28);--qscroll-track:rgba(15,23,42,.06);--qscroll-thumb:rgba(15,23,42,.22);--qtip-shadow:0 12px 30px rgba(2,6,23,.25);--qhm0:rgba(15,23,42,.08);--qhm1:#c9def2;--qhm2:#8fc0e8;--qhm3:#4b93cf;--qhm4:#1d64a8}
+      :host([data-theme="dark"]){color-scheme:dark;--qink:#e8eef5;--qmuted:rgba(232,238,245,.62);--qbg:linear-gradient(165deg,rgba(32,38,47,.88),rgba(21,26,33,.82));--qsolid:#1d232c;--qhead:rgba(29,35,44,.74);--qline:rgba(255,255,255,.1);--qedge:rgba(255,255,255,.16);--qtrack:rgba(255,255,255,.16);--qseg:rgba(255,255,255,.08);--qaccent:#2ec4a6;--qglow:rgba(46,196,166,.45);--qshadow:0 26px 56px rgba(0,0,0,.5),0 10px 22px rgba(0,0,0,.38);--qbright:.9;--qlens:linear-gradient(125deg,transparent 30%,rgba(255,255,255,.14) 46%,rgba(255,255,255,.02) 58%,transparent 72%),radial-gradient(120% 120% at 50% 50%,transparent 72%,rgba(255,255,255,.08) 90%,rgba(150,180,255,.12) 100%);--qlens-opacity:.35;--qglass:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 0 1px rgba(255,255,255,.08),inset 0 8px 20px rgba(255,255,255,.07),inset 0 -12px 24px rgba(0,0,0,.3);--qseg-bg:rgba(255,255,255,.07);--qseg-shadow:inset 0 1px 3px rgba(0,0,0,.35);--qactive-bg:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08));--qactive-shadow:0 3px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.22);--qpanel-bg:rgba(255,255,255,.05);--qpanel-shadow:inset 0 1px 0 rgba(255,255,255,.08);--qinset:inset 0 1px 2px rgba(0,0,0,.4);--qskel:linear-gradient(100deg,rgba(255,255,255,.05) 40%,rgba(255,255,255,.13) 50%,rgba(255,255,255,.05) 60%);--qscroll:rgba(255,255,255,.24);--qscroll-track:rgba(255,255,255,.07);--qscroll-thumb:rgba(255,255,255,.2);--qtip-shadow:0 12px 30px rgba(0,0,0,.55);--qhm0:rgba(255,255,255,.07);--qhm1:#1e3d63;--qhm2:#2e6da4;--qhm3:#5ea3d8;--qhm4:#b3e0fa}
       *{box-sizing:border-box}
-      .card{padding:10px 11px;border:1px solid var(--qline);border-radius:var(--qradius);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);box-shadow:var(--qshadow);color:var(--qink);line-height:1.35;user-select:none;position:relative;isolation:isolate;overflow:hidden;animation:lg-in .55s var(--qbounce) both}
-      .card::before,dialog::before{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;pointer-events:none;mix-blend-mode:screen;opacity:.6;filter:url(#lg-lens);background:linear-gradient(125deg,transparent 30%,rgba(255,255,255,.4) 46%,rgba(255,255,255,.04) 58%,transparent 72%),radial-gradient(120% 120% at 50% 50%,transparent 72%,rgba(255,255,255,.3) 90%,rgba(150,180,255,.18) 100%)}
-      .card::after,dialog::after{content:"";position:absolute;inset:0;z-index:2;border-radius:inherit;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 0 0 1px rgba(255,255,255,.32),inset 0 8px 20px rgba(255,255,255,.34),inset 0 -12px 24px rgba(15,23,42,.05)}
+      .card{padding:10px 11px;border:1px solid var(--qline);border-radius:var(--qradius);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));box-shadow:var(--qshadow);color:var(--qink);line-height:1.35;user-select:none;position:relative;isolation:isolate;overflow:hidden;animation:lg-in .55s var(--qbounce) both}
+      .card::before,dialog::before{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;pointer-events:none;mix-blend-mode:screen;opacity:var(--qlens-opacity);filter:url(#lg-lens);background:var(--qlens)}
+      .card::after,dialog::after{content:"";position:absolute;inset:0;z-index:2;border-radius:inherit;pointer-events:none;box-shadow:var(--qglass)}
       .card>*,dialog>*{position:relative;z-index:1}
       .toggle,.refresh,.usage-link,.usage-close,dialog button,.seg button,input,select{transition:transform .28s var(--qbounce),background .2s ease,box-shadow .2s ease,opacity .2s ease,color .2s ease,filter .2s ease}
       .toggle:active,.refresh:active,.usage-close:active,dialog button:active,.seg button:active{transform:scale(.93)}
@@ -44,37 +58,37 @@ function installQuotaWidget(snapshot, options = {}) {
       @keyframes bd-in{from{opacity:0}to{opacity:1}}
       @keyframes bd-out{to{opacity:0}}
       .actions{display:flex;align-items:center;gap:5px}.usage-link{border:0;background:transparent;color:inherit;font:inherit;font-size:10px;opacity:.65;cursor:pointer;padding:3px}.usage-link:hover{opacity:1;text-decoration:underline}
-      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(1.03);border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column;animation:dlg-in .3s cubic-bezier(.22,.85,.3,1)}dialog[open]::backdrop{animation:bd-in .3s ease-out}dialog.closing{animation:dlg-out .18s ease-in forwards;pointer-events:none}dialog.closing::backdrop{animation:bd-out .18s ease-in forwards}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
+      dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column;animation:dlg-in .3s cubic-bezier(.22,.85,.3,1)}dialog[open]::backdrop{animation:bd-in .3s ease-out}dialog.closing{animation:dlg-out .18s ease-in forwards;pointer-events:none}dialog.closing::backdrop{animation:bd-out .18s ease-in forwards}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
       .dialog-head,.activity,.usage-filters,.usage-pages{flex:none}
       .dialog-head,.usage-pages{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.dialog-head{justify-content:space-between}.dialog-head h2{font-size:15px;font-weight:600;margin:0;letter-spacing:-.01em}
       .usage-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--qline);border-radius:9px;background:var(--qseg);color:inherit;cursor:pointer;opacity:.75}.usage-close:hover{opacity:1;background:var(--qtrack)}.usage-close:focus-visible{outline:2px solid var(--qaccent);outline-offset:1px}
       .usage-filters{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0 12px}
-      .seg{display:inline-flex;gap:3px;background:rgba(15,23,42,.05);border:1px solid var(--qline);border-radius:14px;padding:4px;box-shadow:inset 0 1px 3px rgba(15,23,42,.08)}.seg button{border:0;background:transparent;color:inherit;opacity:.62;font-family:var(--qmono);font-size:11px;padding:6px 13px;border-radius:11px;cursor:pointer}.seg button.active{background:linear-gradient(180deg,#fff,rgba(255,255,255,.72));opacity:1;font-weight:600;box-shadow:0 3px 8px rgba(2,6,23,.14),inset 0 1px 0 #fff}
+      .seg{display:inline-flex;gap:3px;background:var(--qseg-bg);border:1px solid var(--qline);border-radius:14px;padding:4px;box-shadow:var(--qseg-shadow)}.seg button{border:0;background:transparent;color:inherit;opacity:.62;font-family:var(--qmono);font-size:11px;padding:6px 13px;border-radius:11px;cursor:pointer}.seg button.active{background:var(--qactive-bg);opacity:1;font-weight:600;box-shadow:var(--qactive-shadow)}
       .usage-dates{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.usage-dates label{display:flex;align-items:center;gap:6px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
       dialog button,dialog input,dialog select{font:inherit;color:inherit;background:transparent;border:1px solid var(--qline);border-radius:8px;padding:6px 9px}dialog button{cursor:pointer}dialog button:disabled{opacity:.4;cursor:default}
       .usage-scroll{overflow:auto;flex:1;min-height:0;border:1px solid var(--qline);border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:10px 12px;border-bottom:1px solid var(--qline);text-align:right;font-family:var(--qmono);font-size:11px}th{position:sticky;top:0;z-index:1;background:var(--qhead);color:var(--qmuted);font-weight:500;font-size:10px;letter-spacing:.1em}th:first-child,td:first-child{text-align:left;font-family:inherit;font-size:12px}td small{display:block;font-family:var(--qmono);font-size:9px;opacity:.6;margin-top:2px}td.strong{font-weight:600}tbody tr:hover{background:var(--qseg)}tbody tr:last-child td{border-bottom:0}
       .usage-status{font-family:var(--qmono);font-size:10px;color:var(--qmuted);margin:0 0 10px}.usage-error{color:#df8842;font-size:11px;margin:0 0 10px}
       .usage-pages{justify-content:flex-end;margin-top:14px;font-family:var(--qmono);font-size:10px}.usage-pages label{display:flex;align-items:center;gap:6px;color:var(--qmuted)}
-      .activity{margin:14px 0 16px;border:1px solid var(--qline);border-radius:16px;padding:14px 16px;background:rgba(255,255,255,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+      .activity{margin:14px 0 16px;border:1px solid var(--qline);border-radius:16px;padding:14px 16px;background:var(--qpanel-bg);box-shadow:var(--qpanel-shadow)}
       .activity-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}.activity-head h3{margin:0;font-size:13px;font-weight:600;letter-spacing:-.01em}
       .activity-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.activity-controls select{max-width:220px;font-size:11px}
       .activity .seg{padding:3px}.activity .seg button{padding:5px 11px;font-size:10px}
       .activity .usage-status{margin:0 0 8px}.activity .usage-error{margin:0 0 8px}
       .hm-wrap{position:relative}
-      .hm-scroll{overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:rgba(15,23,42,.28) transparent}
-      .hm-scroll::-webkit-scrollbar{height:7px}.hm-scroll::-webkit-scrollbar-track{background:rgba(15,23,42,.06);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb{background:rgba(15,23,42,.22);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--qaccent)}
+      .hm-scroll{overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:var(--qscroll) transparent}
+      .hm-scroll::-webkit-scrollbar{height:7px}.hm-scroll::-webkit-scrollbar-track{background:var(--qscroll-track);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb{background:var(--qscroll-thumb);border-radius:99px}.hm-scroll::-webkit-scrollbar-thumb:hover{background:var(--qaccent)}
       .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;width:max-content;min-height:102px}
-      .hm-cell{width:12px;height:12px;border-radius:3px;background:rgba(15,23,42,.08)}
-      .hm-cell[data-level="1"]{background:#c9def2}.hm-cell[data-level="2"]{background:#8fc0e8}.hm-cell[data-level="3"]{background:#4b93cf}.hm-cell[data-level="4"]{background:#1d64a8}
+      .hm-cell{width:12px;height:12px;border-radius:3px;background:var(--qhm0)}
+      .hm-cell[data-level="1"]{background:var(--qhm1)}.hm-cell[data-level="2"]{background:var(--qhm2)}.hm-cell[data-level="3"]{background:var(--qhm3)}.hm-cell[data-level="4"]{background:var(--qhm4)}
       .hm-cell.pad{visibility:hidden}.hm-cell[data-date]{cursor:pointer}.hm-cell[data-date]:hover{outline:1px solid var(--qink);outline-offset:1px}
       .hm-cell.selected,.hm-cell.selected:hover{outline:2px solid var(--qaccent);outline-offset:1px}
-      .hm-cell.skel,.skel-bar{background:linear-gradient(100deg,rgba(15,23,42,.07) 40%,rgba(15,23,42,.17) 50%,rgba(15,23,42,.07) 60%);background-size:200% 100%;animation:q-sweep 1.1s linear infinite}
+      .hm-cell.skel,.skel-bar{background:var(--qskel);background-size:200% 100%;animation:q-sweep 1.1s linear infinite}
       .skel-bar{display:block;height:10px;border-radius:5px}.hm-summary .skel-bar{width:230px;height:9px}
       @keyframes q-sweep{from{background-position:200% 0}to{background-position:-200% 0}}
       .hm-months{display:grid;gap:3px;width:max-content;margin-top:5px;font-family:var(--qmono);font-size:9px;color:var(--qmuted);min-height:11px}.hm-months span{grid-row:1;white-space:nowrap}
       .hm-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:9px;font-family:var(--qmono);font-size:10px;color:var(--qmuted)}
       .hm-legend{display:flex;align-items:center;gap:3px}.hm-legend .hm-cell{width:10px;height:10px}
-      .hm-tip{position:absolute;z-index:5;pointer-events:none;background:var(--qsolid);border:1px solid var(--qedge);border-radius:10px;padding:8px 11px;font-family:var(--qmono);font-size:10px;line-height:1.7;box-shadow:0 12px 30px rgba(2,6,23,.25);white-space:nowrap;color:var(--qmuted)}.hm-tip b{display:block;color:var(--qink)}.hm-tip .hi{color:var(--qink)}
+      .hm-tip{position:absolute;z-index:5;pointer-events:none;background:var(--qsolid);border:1px solid var(--qedge);border-radius:10px;padding:8px 11px;font-family:var(--qmono);font-size:10px;line-height:1.7;box-shadow:var(--qtip-shadow);white-space:nowrap;color:var(--qmuted)}.hm-tip b{display:block;color:var(--qink)}.hm-tip .hi{color:var(--qink)}
       .head,.label{display:flex;justify-content:space-between;align-items:center;gap:8px}
       .title{font-family:var(--qmono);font-weight:600;font-size:11px;letter-spacing:.06em}
       .toggle{display:flex;align-items:center;gap:4px;flex:1;min-width:0;border:0;border-radius:4px;padding:3px;margin:-3px;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;white-space:nowrap}
@@ -91,8 +105,8 @@ function installQuotaWidget(snapshot, options = {}) {
       .refresh:disabled{cursor:wait;opacity:.35}
       .row{margin-top:5px}.row[hidden]{display:none}.name{opacity:.65;font-size:10px;letter-spacing:.08em}.number{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
       .number small{font-size:10px;font-weight:400;opacity:.6;margin-left:3px}
-      .track{margin-top:3px;height:5px;border-radius:99px;overflow:hidden;background:var(--qtrack);box-shadow:inset 0 1px 2px rgba(15,23,42,.2)}
-      .fill{height:100%;border-radius:99px;background:var(--qaccent);box-shadow:0 0 10px rgba(18,164,140,.5);transition:width .5s var(--qbounce),background .3s ease}
+      .track{margin-top:3px;height:5px;border-radius:99px;overflow:hidden;background:var(--qtrack);box-shadow:var(--qinset)}
+      .fill{height:100%;border-radius:99px;background:var(--qaccent);box-shadow:0 0 10px var(--qglow);transition:width .5s var(--qbounce),background .3s ease}
       .reset{display:flex;justify-content:space-between;gap:4px;font-family:var(--qmono);font-size:9px;opacity:.55;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
       .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid var(--qline)}.summary-item{min-width:0}.summary-label{font-family:var(--qmono);font-size:9px;letter-spacing:.1em;opacity:.7}.summary-value{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-family:var(--qmono);font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail.expiry{color:inherit;opacity:.9}.summary-detail[title]{cursor:help}
       .credits{margin-top:6px;font-family:var(--qmono);font-size:9px;border-top:1px solid var(--qline);padding-top:5px}.credits[hidden]{display:none}.credits summary{cursor:pointer;overflow-wrap:anywhere}.credits-list{margin-top:5px;display:grid;gap:6px}.credit-expiry{display:block;opacity:.65}.credit-warning{color:#df8842;opacity:1}
@@ -205,7 +219,7 @@ function installQuotaWidget(snapshot, options = {}) {
     const loading = !disconnected && (waitingForRefresh || !!current?.loading);
     button.disabled = loading;
     button.setAttribute('aria-busy', String(loading));
-    const accent = '#12a48c';
+    const critical = remaining => remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : 'var(--qaccent)';
     for (const key of ['five_hour', 'seven_day']) {
       const w = current?.data?.[key];
       const row = root.querySelector(`[data-window="${key}"]`);
@@ -214,10 +228,10 @@ function installQuotaWidget(snapshot, options = {}) {
       const remaining = Math.max(0, Math.min(100, w.remaining_percent));
       row.querySelector('b').textContent = formatPercent(w.remaining_percent);
       row.querySelector('.fill').style.width = `${remaining}%`;
-      row.querySelector('.fill').style.background = remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : accent;
+      row.querySelector('.fill').style.background = critical(remaining);
       for (const gauge of root.querySelectorAll(`[data-gauge="${key}"]`)) {
         gauge.style.strokeDashoffset = String(100 - remaining);
-        gauge.style.stroke = remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : accent;
+        gauge.style.stroke = critical(remaining);
       }
       row.querySelector('.track').setAttribute('aria-valuenow', String(remaining));
       row.querySelector('.track').setAttribute('aria-valuetext', `剩余 ${formatPercent(w.remaining_percent)}，已用 ${formatPercent(w.used_percent)}`);
@@ -580,8 +594,9 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 32,
-    update(value) {
+    version: 33,
+    update(value, opts) {
+      if (opts) setTheme(opts.theme);
       // An immediate push and the periodic tick can race; never regress to older data.
       if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();
       current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status();
@@ -591,7 +606,7 @@ function installQuotaWidget(snapshot, options = {}) {
     receiveActivity,
     takeActivityRequest() {const request=activityRequest;activityRequest=null;return request;},
     takeRefreshRequest() { const requested = refreshRequested; refreshRequested = false; return requested; },
-    dispose() { disposed = true; observer.disconnect(); dialogRO.disconnect(); clearTimeout(collapseTimer); clearInterval(timer); dialog.close(); host.remove(); if (positioned) positioned.style.position = ''; delete window[KEY]; },
+    dispose() { disposed = true; colorScheme.removeEventListener('change', applyScheme); observer.disconnect(); dialogRO.disconnect(); clearTimeout(collapseTimer); clearInterval(timer); dialog.close(); host.remove(); if (positioned) positioned.style.position = ''; delete window[KEY]; },
   };
   mount(); paint();
   return status();

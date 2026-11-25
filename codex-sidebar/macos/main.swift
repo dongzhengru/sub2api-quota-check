@@ -62,6 +62,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var updateItem: NSMenuItem!
     private var automaticUpdateItem: NSMenuItem!
     private var updateLabel: NSMenuItem!
+    private var themeItems: [String: NSMenuItem] = [:]
     private var quitItem: NSMenuItem!
     private var uninstallItem: NSMenuItem!
     private var updateInProgress = false
@@ -99,6 +100,19 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dlpItem = add(menu, "连接 DLP 客户端额度", #selector(connectDlp))
         stopItem = add(menu, "停止额度显示", #selector(stopQuota))
         menu.addItem(.separator())
+        let themeMenu = NSMenu()
+        themeMenu.autoenablesItems = false
+        for (value, title) in [("auto", "自动（跟随系统）"), ("light", "浅色"), ("dark", "深色")] {
+            let themeItem = NSMenuItem(title: title, action: #selector(selectTheme(_:)), keyEquivalent: "")
+            themeItem.target = self
+            themeItem.representedObject = value
+            themeMenu.addItem(themeItem)
+            themeItems[value] = themeItem
+        }
+        themeItems["auto"]?.state = .on
+        let appearanceItem = NSMenuItem(title: "外观", action: nil, keyEquivalent: "")
+        appearanceItem.submenu = themeMenu
+        menu.addItem(appearanceItem)
         _ = add(menu, "查看状态…", #selector(showStatus))
         _ = add(menu, "打开日志", #selector(openLog))
         _ = add(menu, "使用说明…", #selector(showHelp))
@@ -159,6 +173,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quitItem.isEnabled = !value && !updateInProgress
         uninstallItem.isEnabled = !value && !updateInProgress
         updateItem.isEnabled = !value && !updateInProgress
+        for item in themeItems.values { item.isEnabled = !value && !updateInProgress }
         if value { statusLabel.title = "正在处理…" }
     }
 
@@ -233,6 +248,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             self.lastStatus = status
+            if let value = status["theme"] as? String { self.applyTheme(value) }
             let running = status["running"] as? Bool ?? false
             let connected = status["connected"] as? Bool ?? false
             let pages = status["pages"] as? Int ?? 0
@@ -282,6 +298,17 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.refreshStatus(recover: false)
         }
     }
+    private func applyTheme(_ value: String) {
+        for (key, item) in themeItems { item.state = key == value ? .on : .off }
+    }
+    @objc private func selectTheme(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        applyTheme(value)
+        perform(["theme", value]) { result in
+            if result.code != 0 { self.alert("无法切换外观", result.output) }
+            self.refreshStatus(recover: false)
+        }
+    }
     @objc private func showStatus() { refreshStatus(recover: false, show: true) }
     @objc private func openLog() {
         let log = support.appendingPathComponent("sidebar.log")
@@ -289,7 +316,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { alert("暂无日志", "开启额度显示后会生成日志。") }
     }
     @objc private func showHelp() {
-        alert(appName, "普通实例点击「启动客户端与额度」。DLP 实例使用原安全终端中的 gpt-safe 启动，再点击「连接 DLP 客户端额度」；助手会自动等待并连接，两个实例均可显示。\n\n首次适配 DLP 后，旧实例需要退出，再从原 DLP 入口重开。仅重复运行启动器无法为旧进程开启连接。\n\n点击卡片的「网关额度」标题或箭头可收起、展开；会记住本机折叠状态，收起后仍持续更新。额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
+        alert(appName, "普通实例点击「启动客户端与额度」。DLP 实例使用原安全终端中的 gpt-safe 启动，再点击「连接 DLP 客户端额度」；助手会自动等待并连接，两个实例均可显示。\n\n首次适配 DLP 后，旧实例需要退出，再从原 DLP 入口重开。仅重复运行启动器无法为旧进程开启连接。\n\n点击卡片的「网关额度」标题或箭头可收起、展开；会记住本机折叠状态，收起后仍持续更新。额度每 120 秒自动刷新，卡片右上角支持手动刷新。重置时间使用北京时间。\n\n「外观」默认跟随系统深浅色，也可固定为浅色或深色；切换后卡片即时换肤，无需重启客户端，选择会保存并在下次启动时保留。\n\n停止额度或退出助手不会退出 ChatGPT。完全退出客户端后，再从普通客户端图标打开，可关闭本机调试端口。\n\n本助手不添加登录项，也不会在开机时打开 ChatGPT。")
     }
     @objc private func quit() {
         guard !busy else { return }
