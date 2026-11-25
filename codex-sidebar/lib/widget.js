@@ -421,6 +421,17 @@ function installQuotaWidget(snapshot, options = {}) {
   function paintDaySelection() {
     hmGrid.querySelectorAll('.hm-cell[data-date]').forEach(cell=>cell.classList.toggle('selected',cell.dataset.date===activityDay));
   }
+  // tooltip 会被最近的滚动祖先（弹窗 dialog）裁剪，翻转与夹紧都要以它的可视区为准，而不是视口。
+  function tipBounds() {
+    let top=8,bottom=window.innerHeight;
+    for(let node=hmTip.parentElement;node;node=node.parentElement){
+      const style=getComputedStyle(node);
+      if(style.overflowY==='visible')continue;
+      const rect=node.getBoundingClientRect();
+      top=Math.max(top,rect.top+1);bottom=Math.min(bottom,rect.bottom-1);break;
+    }
+    return {top,bottom};
+  }
   function showActivityTip(cell) {
     const row=activityData?.trend.find(entry=>entry.date===cell.dataset.date);
     const d=new Date(cell.dataset.date+'T00:00:00Z');
@@ -445,8 +456,11 @@ function installQuotaWidget(snapshot, options = {}) {
     const wrapRect=hmWrap.getBoundingClientRect(),cellRect=cell.getBoundingClientRect(),tipRect=hmTip.getBoundingClientRect();
     let left=cellRect.left-wrapRect.left+cellRect.width/2-tipRect.width/2;
     left=Math.max(0,Math.min(left,wrapRect.width-tipRect.width));
-    let top=cellRect.top-wrapRect.top-tipRect.height-8;
-    if(cellRect.top-tipRect.height-8<8)top=cellRect.bottom-wrapRect.top+8;
+    const bounds=tipBounds();
+    const above=cellRect.top-bounds.top,below=bounds.bottom-cellRect.bottom;
+    const cellTop=above<tipRect.height+8&&below>above?cellRect.bottom+8:cellRect.top-tipRect.height-8;
+    let top=cellTop-wrapRect.top;
+    top=Math.max(bounds.top+4-wrapRect.top,Math.min(top,bounds.bottom-4-wrapRect.top-tipRect.height));
     hmTip.style.left=left+'px';hmTip.style.top=top+'px';
   }
   hmGrid.addEventListener('pointerover',e=>{const cell=e.target.closest('.hm-cell[data-date]');if(cell)showActivityTip(cell);});

@@ -182,6 +182,17 @@ try {
   assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-tip').textContent`),/点击定位当日排行/);
   await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]').dispatchEvent(new PointerEvent('pointerout',{bubbles:true}))`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-tip').hidden`),true);
+  const topRowTipVisible = await cdp.evaluate(`(() => {
+    const dialog = ${ui}.querySelector('dialog'), tip = ${ui}.querySelector('.hm-tip');
+    const cell = [...${ui}.querySelectorAll('.hm-cell[data-date]')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+    cell.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    const box = tip.getBoundingClientRect(), edge = dialog.getBoundingClientRect();
+    const inside = box.top >= edge.top - 0.5 && box.bottom <= edge.bottom + 0.5;
+    cell.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }));
+    return { inside, text: tip.textContent };
+  })()`);
+  assert.ok(topRowTipVisible.inside, 'Tooltip for the top heatmap row stays inside the scrollable dialog');
+  assert.match(topRowTipVisible.text, /^\d{4}-\d{2}-\d{2} · 周/, 'Tooltip header line is not clipped away');
   assert.ok(await waitUntil(`${ui}.querySelector('dialog').style.height === ''`), 'Dialog settled before the day click');
   const heldBefore = await cdp.evaluate(`${ui}.querySelector('dialog').getBoundingClientRect().height`);
   const dayCell = await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]').dataset.date`);
