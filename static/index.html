@@ -46,6 +46,7 @@ main{width:100%;max-width:1000px;margin:0 auto;padding:36px 24px 48px}
 .strip .detail{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .strip .detail[title]{cursor:help}
 .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.cards.single{grid-template-columns:1fr}
 .quota{padding:26px 28px;min-width:0}
 .cardhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cardhead h2{font-size:15px;font-weight:600;margin:0}
@@ -184,7 +185,9 @@ function tick(){
  document.getElementById('quiet-note').hidden=!inQuietHours();
  if(!latest)return;
  for(const key of ['five_hour','seven_day']){
-  const seconds=Math.max(0,Math.ceil((Date.parse(latest[key].resets_at)-Date.now())/1000));
+  const quota=latest[key];
+  if(!quota)continue;
+  const seconds=Math.max(0,Math.ceil((Date.parse(quota.resets_at)-Date.now())/1000));
   const days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600),minutes=Math.floor(seconds%3600/60);
   document.querySelector('#'+key+' .countdown').textContent=seconds?`Reset ${days?days+'d ':''}${hours}h ${minutes}m`:'已到重置时间，等待上游更新';
  }
@@ -197,6 +200,8 @@ async function load(){
   const dateFmt=new Intl.DateTimeFormat('zh-CN',{timeZone:data.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
   for(const key of ['five_hour','seven_day']){
    const card=document.getElementById(key),w=data[key];
+   card.hidden=!w;
+   if(!w)continue;
    card.querySelector('.number').textContent=fmt(w.remaining_percent);
    card.querySelector('.used').textContent=fmt(w.used_percent)+'%';
    card.querySelector('.remaining').textContent=fmt(w.remaining_percent)+'%';
@@ -205,6 +210,7 @@ async function load(){
    card.querySelector('time').textContent=dateFmt.format(new Date(w.resets_at));
    card.querySelector('time').dateTime=w.resets_at;
   }
+  document.querySelector('.cards').classList.toggle('single',!data.five_hour||!data.seven_day);
   latest=data;
   renderCredits(data);
   const stamp=data.cache?.fetched_at||data.updated_at;

@@ -2,17 +2,22 @@ export const ENDPOINT = 'https://gateway.zhengru.top/api/quota/api/usage';
 
 export function validateUsage(data) {
   if (!data || typeof data !== 'object') throw new Error('额度响应不是对象');
+  const windows = {};
   for (const key of ['five_hour', 'seven_day']) {
     const w = data[key];
-    if (!w || ['used_percent', 'remaining_percent'].some(k =>
+    // Pro 账号没有 5 小时窗口，服务端以 null 表示该窗口不存在。
+    if (w == null) { windows[key] = null; continue; }
+    if (typeof w !== 'object' || ['used_percent', 'remaining_percent'].some(k =>
       typeof w[k] !== 'number' || !Number.isFinite(w[k]) || w[k] < 0) ||
       typeof w.resets_at !== 'string' || !Number.isFinite(Date.parse(w.resets_at))) {
       throw new Error(`额度响应字段无效：${key}`);
     }
+    windows[key] = pickWindow(w);
   }
+  if (!windows.five_hour && !windows.seven_day) throw new Error('额度响应缺少有效额度窗口');
   // Only transfer fields the widget actually needs into the renderer.
   return {
-    five_hour: pickWindow(data.five_hour), seven_day: pickWindow(data.seven_day),
+    five_hour: windows.five_hour, seven_day: windows.seven_day,
     reset_credits: validateResetCredits(data.reset_credits),
     credits: { unlimited: data.credits?.unlimited === true,
       balance: data.credits?.balance ?? null },

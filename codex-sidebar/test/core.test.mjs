@@ -27,6 +27,17 @@ test('quota parsing rejects malformed windows and drops unrelated fields', () =>
   assert.throws(() => validateUsage(invalid), /无效/);
 });
 
+test('Pro accounts report only the seven-day window', () => {
+  for (const value of [null, undefined]) {
+    const pro = sample(); pro.five_hour = value;
+    const data = validateUsage(pro);
+    assert.equal(data.five_hour, null);
+    assert.equal(data.seven_day.remaining_percent, 68);
+  }
+  const empty = sample(); empty.five_hour = null; empty.seven_day = null;
+  assert.throws(() => validateUsage(empty), /额度窗口/);
+});
+
 test('HTTP failure never becomes a successful quota response', async () => {
   await assert.rejects(fetchUsage({ fetcher: async (url, options) => {
     assert.equal(url, ENDPOINT); assert.equal(options.redirect, 'error');

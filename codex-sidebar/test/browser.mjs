@@ -99,7 +99,17 @@ try {
   await inject({...snapshot,data:{...snapshot.data,reset_credits:{available_count:null,credits:[],error:'重置卡无权限'}}});
   assert.equal(await cdp.evaluate(`${creditUI}.getElementById('reset-card-count').textContent`), '—');
   assert.equal(await cdp.evaluate(`${creditUI}.querySelector('b').textContent`), '70%');
+  // Pro 账号上游没有 5 小时窗口：折叠态 gauge 换成整圆，展开态隐藏 5 小时行。
+  await inject({ ...snapshot, data: { ...snapshot.data, five_hour: null } });
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('[data-window="five_hour"]').hidden`), true, 'Pro hides the absent 5-hour row');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('[data-window="seven_day"]').hidden`), false, 'Pro keeps the seven-day row');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.card').classList.contains('single-window')`), true, 'Single-window class marks the Pro layout');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${creditUI}.querySelector('.gauge .ring')).display`), 'block', 'Pro gauge collapses to a full ring');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${creditUI}.querySelector('.gauge .arcs')).display`), 'none', 'Arc pair disappears without a 5-hour window');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.gauge .ring .gfill').style.strokeDashoffset`), '32', 'Ring follows the seven-day remaining quota');
   await inject(snapshot);
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('.card').classList.contains('single-window')`), false, 'Two-window accounts leave the single-window layout');
+  assert.equal(await cdp.evaluate(`${creditUI}.querySelector('[data-window="five_hour"]').hidden`), false, 'The 5-hour row returns for accounts that have it');
   // Usage stays hidden and makes no request until explicitly opened.
   const ui = `document.getElementById('zhengru-quota-sidebar').shadowRoot`;
   const waitUntil = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await cdp.evaluate(expr)) return true; await new Promise(r => setTimeout(r, 50)); } return false; };
@@ -119,6 +129,12 @@ try {
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.dispose()`);
   await inject(snapshot);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('#quota-details').hidden`), true, 'Reinstall remembers collapse');
+  // Pro 折叠态：整圆 gauge 取代双弧，标题只报 7 天余额。
+  await inject({ ...snapshot, data: { ...snapshot.data, five_hour: null } });
+  assert.equal(await cdp.evaluate(`${ui}.querySelector('.toggle').title`), '点击展开额度详情 · 7d 剩 68%', 'Collapsed title reports only the seven-day window');
+  const proCollapsedShot = await cdp.call('Page.captureScreenshot', { format: 'png' });
+  await writeFile(new URL('preview-collapsed-pro.png', artifacts), Buffer.from(proCollapsedShot.data, 'base64'));
+  await inject(snapshot);
   await cdp.call('Page.enable');
   const collapsedShot = await cdp.call('Page.captureScreenshot', { format: 'png' });
   await writeFile(new URL('preview-collapsed.png', artifacts), Buffer.from(collapsedShot.data, 'base64'));
@@ -402,6 +418,16 @@ try {
   dashboardUsage={...dashboardUsage,credits:{balance:null,unlimited:false}};
   await cdp.evaluate(`load()`);
   assert.equal(await cdp.evaluate(`document.getElementById('credit-balance').textContent`),'—');
+  // Pro 账号：five_hour=null 时隐藏 5 小时卡片，7 天卡片独占一行且倒计时轮询不报错。
+  dashboardUsage={...dashboardUsage,five_hour:null};
+  await cdp.evaluate(`load()`);
+  assert.equal(await cdp.evaluate(`document.getElementById('five_hour').hidden`),true,'Pro dashboard hides the 5-hour card');
+  assert.equal(await cdp.evaluate(`document.querySelector('.cards').classList.contains('single')`),true,'The remaining quota card spans the row');
+  assert.equal(await cdp.evaluate(`document.querySelector('#seven_day .number').textContent`),'68');
+  assert.equal(await cdp.evaluate(`document.querySelector('#seven_day .error').hidden`),true,'Tick skips the missing window without failing');
+  dashboardUsage={...dashboardUsage,five_hour:{used_percent:30,remaining_percent:70,resets_at:new Date(now+7200_000).toISOString()}};
+  await cdp.evaluate(`load()`);
+  assert.equal(await cdp.evaluate(`document.getElementById('five_hour').hidden`),false,'Accounts with a 5-hour window show the card again');
   dashboardStatus=502;dashboardUsage={detail:'模拟请求失败'};
   await cdp.evaluate(`load()`);
   assert.match(await cdp.evaluate(`document.querySelector('#five_hour .error').textContent`),/模拟请求失败/);

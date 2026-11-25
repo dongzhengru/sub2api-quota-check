@@ -22,6 +22,7 @@ ACTIVITY_DAYS = 365
 EXCLUDED_USER_EMAILS = {'system-check@sub2api.com'}
 TREND_FIELDS = ('requests', 'input_tokens', 'output_tokens', 'cache_creation_tokens',
                 'cache_read_tokens', 'total_tokens', 'cost', 'actual_cost')
+WINDOW_KEYS = ('five_hour', 'seven_day')
 
 
 class UsageService:
@@ -251,30 +252,33 @@ class UsageService:
                 await self.login()
                 continue
             data = self.unpack(response)
-            windows = {}
-            for key in ('five_hour', 'seven_day'):
-                window = data.get(key)
-                if not isinstance(window, dict):
-                    raise HTTPException(502, '上游未返回完整的 5 小时和 7 天额度。')
-                used = window.get('utilization')
-                reset = window.get('resets_at')
-                if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) or used < 0:
-                    raise HTTPException(502, '上游额度百分比无效。')
-                try:
-                    parsed = datetime.fromisoformat(reset.replace('Z', '+00:00'))
-                    if parsed.tzinfo is None:
-                        raise ValueError()
-                except (AttributeError, TypeError, ValueError):
-                    raise HTTPException(502, '上游重置时间无效。')
-                windows[key] = {
-                    'used_percent': used,
-                    'remaining_percent': max(0, 100 - used),
-                    'resets_at': reset,
-                    'window_stats': window.get('window_stats'),
-                }
+            windows = {key: self.parse_window(data.get(key)) for key in WINDOW_KEYS}
+            if not windows['seven_day']:
+                raise HTTPException(502, '上游未返回有效的 7 天额度。')
             reset_credits, credits = await self.fetch_openai_quota()
             return {'updated_at': data.get('updated_at'), **windows,
                     'reset_credits': reset_credits, 'credits': credits}
+
+    @staticmethod
+    def parse_window(window):
+        # Pro 账号上游没有 5 小时窗口，字段缺失或异常都按不存在该窗口处理。
+        if not isinstance(window, dict):
+            return None
+        used, reset = window.get('utilization'), window.get('resets_at')
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) or used < 0:
+            return None
+        try:
+            parsed = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return {
+            'used_percent': used,
+            'remaining_percent': max(0, 100 - used),
+            'resets_at': reset,
+            'window_stats': window.get('window_stats'),
+        }
 
     async def fetch_openai_quota(self):
         try:

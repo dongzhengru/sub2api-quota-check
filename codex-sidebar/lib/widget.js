@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  if (window[KEY]?.version !== 31) window[KEY]?.dispose();
+  if (window[KEY]?.version !== 32) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot);
     return window[KEY].status();
@@ -82,13 +82,14 @@ function installQuotaWidget(snapshot, options = {}) {
       .chevron{flex:none;opacity:.55;transition:transform .3s var(--qbounce)}.toggle[aria-expanded="false"] .chevron{transform:rotate(-90deg)}
       .gauge{display:none;flex:none}.toggle[aria-expanded="false"] .gauge{display:block}
       .gauge .gtrack{stroke:var(--qtrack)}.gauge .gfill{stroke:var(--qaccent);transition:stroke-dashoffset .35s ease}.stale .gauge .gfill{opacity:.45}.gauge .gem{fill:var(--qmuted);opacity:.6}
+      .gauge .ring{display:none}.single-window .gauge .arcs{display:none}.single-window .gauge .ring{display:block}
       .stale .toggle .title::after{content:'●';font-size:7px;color:#df8842;margin-left:4px}
       #quota-details[hidden]{display:none}
       .refresh{display:grid;place-items:center;width:20px;height:20px;padding:3px;border:0;border-radius:5px;background:transparent;color:inherit;opacity:.55;cursor:pointer}
       .refresh:hover{opacity:1;background:var(--qseg)}
       .refresh:focus-visible{outline:2px solid var(--qaccent);outline-offset:1px}
       .refresh:disabled{cursor:wait;opacity:.35}
-      .row{margin-top:5px}.name{opacity:.65;font-size:10px;letter-spacing:.08em}.number{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+      .row{margin-top:5px}.row[hidden]{display:none}.name{opacity:.65;font-size:10px;letter-spacing:.08em}.number{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
       .number small{font-size:10px;font-weight:400;opacity:.6;margin-left:3px}
       .track{margin-top:3px;height:5px;border-radius:99px;overflow:hidden;background:var(--qtrack);box-shadow:inset 0 1px 2px rgba(15,23,42,.2)}
       .fill{height:100%;border-radius:99px;background:var(--qaccent);box-shadow:0 0 10px rgba(18,164,140,.5);transition:width .5s var(--qbounce),background .3s ease}
@@ -106,7 +107,7 @@ function installQuotaWidget(snapshot, options = {}) {
       </filter>
     </defs></svg>
     <section class="card" aria-label="Zhengru 网关额度">
-      <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="gauge" width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path class="gtrack" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="five_hour" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><path class="gtrack" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="seven_day" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><rect class="gem" x="17" y="17" width="14" height="14" transform="rotate(45 24 24)"/></svg><span class="title">网关额度</span></button><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
+      <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="gauge" width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true"><g class="arcs"><path class="gtrack" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="five_hour" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><path class="gtrack" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="seven_day" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/></g><g class="ring"><circle class="gtrack" cx="24" cy="24" r="19" stroke-width="5"/><circle class="gfill" data-gauge="seven_day" cx="24" cy="24" r="19" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round" transform="rotate(-90 24 24)"/></g><rect class="gem" x="17" y="17" width="14" height="14" transform="rotate(45 24 24)"/></svg><span class="title">网关额度</span></button><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
       <div id="quota-details">
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
@@ -191,10 +192,15 @@ function installQuotaWidget(snapshot, options = {}) {
     const beijingMinutes = Math.floor(Date.now() / 60_000 + 8 * 60) % 1440;
     const quiet = beijingMinutes >= 120 && beijingMinutes < 510;
     const stale = !!current?.error || disconnected || (!quiet && current?.receivedAt != null && Date.now() - current.receivedAt > 270_000);
-    root.querySelector('.card').classList.toggle('stale', stale);
+    const card = root.querySelector('.card');
+    card.classList.toggle('stale', stale);
     const g5 = current?.data?.five_hour, g7 = current?.data?.seven_day;
+    card.classList.toggle('single-window', !!current?.data && !g5 && !!g7);
+    const notes = [];
+    if (g5) notes.push(`5h 剩 ${formatPercent(g5.remaining_percent)}`);
+    if (g7) notes.push(`7d 剩 ${formatPercent(g7.remaining_percent)}`);
     toggle.title = (stale ? '更新失败，展开查看详情' : '点击' + (collapsed ? '展开' : '收起') + '额度详情')
-      + (collapsed && g5 && g7 ? ` · 5h 剩 ${formatPercent(g5.remaining_percent)} / 7d 剩 ${formatPercent(g7.remaining_percent)}` : '');
+      + (collapsed && notes.length ? ` · ${notes.join(' / ')}` : '');
     const button = root.querySelector('.refresh');
     const loading = !disconnected && (waitingForRefresh || !!current?.loading);
     button.disabled = loading;
@@ -203,14 +209,16 @@ function installQuotaWidget(snapshot, options = {}) {
     for (const key of ['five_hour', 'seven_day']) {
       const w = current?.data?.[key];
       const row = root.querySelector(`[data-window="${key}"]`);
+      row.hidden = !!current?.data && !w;
       if (!w) continue;
       const remaining = Math.max(0, Math.min(100, w.remaining_percent));
       row.querySelector('b').textContent = formatPercent(w.remaining_percent);
       row.querySelector('.fill').style.width = `${remaining}%`;
       row.querySelector('.fill').style.background = remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : accent;
-      const gauge = root.querySelector(`[data-gauge="${key}"]`);
-      gauge.style.strokeDashoffset = String(100 - remaining);
-      gauge.style.stroke = remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : accent;
+      for (const gauge of root.querySelectorAll(`[data-gauge="${key}"]`)) {
+        gauge.style.strokeDashoffset = String(100 - remaining);
+        gauge.style.stroke = remaining <= 10 ? '#e05a50' : remaining <= 30 ? '#d99a37' : accent;
+      }
       row.querySelector('.track').setAttribute('aria-valuenow', String(remaining));
       row.querySelector('.track').setAttribute('aria-valuetext', `剩余 ${formatPercent(w.remaining_percent)}，已用 ${formatPercent(w.used_percent)}`);
       row.querySelector('time').textContent = exactDate(w.resets_at);
@@ -572,7 +580,7 @@ function installQuotaWidget(snapshot, options = {}) {
   });
   const status = () => ({ mounted: host.isConnected, selector: sidebar?.id || sidebar?.className || null });
   window[KEY] = {
-    version: 31,
+    version: 32,
     update(value) {
       // An immediate push and the periodic tick can race; never regress to older data.
       if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();

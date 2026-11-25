@@ -79,6 +79,44 @@ def test_failed_queries_not_cached(status, body, expected):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize('five_hour', ['missing', None, {'utilization': 'x'}])
+def test_pro_account_without_five_hour_window(five_hour):
+    async def run():
+        async def handler(request):
+            if request.url.path.endswith('/login'):
+                return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test', 'expires_in': 86400}})
+            if request.url.path.endswith('/quota/refresh'):
+                return httpx.Response(200, json={'code': 0, 'data': {'rate_limit_reset_credits': {'available_count': 0, 'credits': []}, 'credits': {'balance': '0'}}})
+            body = payload()
+            if five_hour == 'missing':
+                del body['data']['five_hour']
+            else:
+                body['data']['five_hour'] = five_hour
+            return httpx.Response(200, json=body)
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            data = await service.get()
+            assert data['five_hour'] is None
+            assert data['seven_day']['remaining_percent'] == 74
+    asyncio.run(run())
+
+
+def test_missing_seven_day_window_fails():
+    async def run():
+        async def handler(request):
+            body = payload()
+            del body['data']['seven_day']
+            return httpx.Response(200, json=body)
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test')
+            service.token, service.token_deadline = 'test', float('inf')
+            with pytest.raises(HTTPException) as exc:
+                await service.get()
+            assert exc.value.status_code == 502
+            assert service.cached is None
+    asyncio.run(run())
+
+
 def test_page_and_api():
     with patch.dict('os.environ', {'SUB2API_EMAIL': '', 'SUB2API_PASSWORD': ''}):
         with TestClient(app) as client:
