@@ -49,7 +49,7 @@ main{width:100%;max-width:1000px;margin:0 auto;padding:36px 24px 48px}
 .cards.single{grid-template-columns:1fr}
 .quota{padding:26px 28px;min-width:0}
 .cardhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.concurrency{margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:11px;white-space:nowrap}
+.concurrency{margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:11px;white-space:nowrap}
 .concurrency[hidden]{display:none}
 .concurrency::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.6}
 .concurrency[data-active]::before{background:var(--accent);opacity:1}
@@ -146,7 +146,7 @@ tbody tr:hover{background:var(--seg)}
 </div>
 <div class="cards">
 <section class="card quota" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2><span class="tag">Session</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
-<section class="card quota" id="seven_day"><div class="cardhead"><h2>7 天额度</h2><span class="concurrency" id="concurrency" hidden>并发 <b></b></span><span class="tag">Weekly</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
+<section class="card quota" id="seven_day"><div class="cardhead"><h2>7 天额度</h2><span class="concurrency" id="concurrency" title="当前并发数 / 并发上限" hidden><b></b></span><span class="tag">Weekly</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 </div>
 <section class="card breakdown" aria-labelledby="breakdown-title">
 <div class="cardhead"><h2 id="breakdown-title">用户 Token 用量</h2><span id="stats-zone"></span></div>
@@ -222,7 +222,7 @@ async function load(){
   badge.hidden=!Number.isSafeInteger(concurrency?.current_in_use)||concurrency.current_in_use<0;
   badge.toggleAttribute('data-active',!badge.hidden&&concurrency.current_in_use>0);
   badge.querySelector('b').textContent=badge.hidden?'':Number.isSafeInteger(concurrency.max_capacity)&&concurrency.max_capacity>0
-   ? concurrency.current_in_use+' / '+concurrency.max_capacity : String(concurrency.current_in_use);
+   ? concurrency.current_in_use+'/'+concurrency.max_capacity : String(concurrency.current_in_use);
   const stamp=data.cache?.fetched_at||data.updated_at;
   const stampFmt=new Intl.DateTimeFormat('zh-CN',{timeZone:data.timezone,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
   document.getElementById('last-updated').textContent=stamp&&Number.isFinite(Date.parse(stamp))?stampFmt.format(new Date(stamp)):'—';
