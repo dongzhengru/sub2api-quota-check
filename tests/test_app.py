@@ -712,3 +712,88 @@ def test_window_stats_snapshots_handle_resets_at_jitter_without_extra_trend_call
             assert store2.last_snapshot_ts() is not None
 
     asyncio.run(run())
+
+
+def test_window_floor_prevents_underestimation_and_cold_start_direct_tokens(tmp_path):
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    from direct_usage import DirectUsageStore
+
+    tz = ZoneInfo('Asia/Shanghai')
+    store = DirectUsageStore(tmp_path / 'floor.db', account_id=1, tz='Asia/Shanghai')
+    resets = '2026-12-02T22:08:00+08:00'
+
+    def ts(h, m=0):
+        return datetime(2026, 11, 27, h, m, tzinfo=tz).timestamp()
+
+    # Mirrors real production window_stats where 60% already has $387.55 of Sub2API spend
+    # (floor = 387.55 / 0.61 ≈ $635.33), while the newly observed +3% window has mixed direct usage
+    # ($16.14 Sub2API across +3%, which naively calibrates to ~$427 and wrongly zeroes direct cost).
+    store.record_snapshot(ts=ts(15, 29), seven_day_used=57.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=319_984_532, window_sub2_cost=371.4085)
+    store.record_snapshot(ts=ts(15, 53), seven_day_used=58.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=325_939_724, window_sub2_cost=376.0057)
+    store.record_snapshot(ts=ts(16, 7), seven_day_used=59.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=327_107_828, window_sub2_cost=379.9499)
+    store.record_snapshot(ts=ts(16, 29), seven_day_used=60.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=328_243_924, window_sub2_cost=384.5970)
+    store.record_snapshot(ts=ts(16, 48), seven_day_used=60.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=329_320_517, window_sub2_cost=387.5521)
+
+    est = store.estimate_range(date(2026, 11, 27), date(2026, 11, 27))
+    assert est['calibration_mode'] == 'auto'
+    # The tightest lower bound comes from 57% ($371.4085 / 0.58 ≈ $640.36) before direct usage diluted Sub2API share.
+    assert est['seven_day_cost_basis'] == pytest.approx(371.4085 / 0.58, rel=1e-3)
+    assert est['status'] == 'ok'
+    assert est['direct_cost'] > 3.0
+    assert est['direct_tokens'] > 1_000_000
+
+    # Cold-start direct-only interval (Sub2API delta = 0) still estimates cost & tokens from window_stats.
+    store2 = DirectUsageStore(tmp_path / 'cold_direct.db', account_id=1, tz='Asia/Shanghai')
+    store2.record_snapshot(ts=ts(17, 0), seven_day_used=60.0, seven_day_resets_at=resets,
+                           window_sub2_tokens=300_000_000, window_sub2_cost=366.0)
+    store2.record_snapshot(ts=ts(17, 15), seven_day_used=61.0, seven_day_resets_at=resets,
+                           window_sub2_tokens=300_000_000, window_sub2_cost=366.0)
+    cold = store2.estimate_range(date(2026, 11, 27), date(2026, 11, 27))
+    assert cold['status'] == 'ok'
+    assert cold['calibration_mode'] == 'auto'
+    assert cold['seven_day_cost_basis'] == pytest.approx(366.0 / 0.61, rel=1e-3)
+    assert cold['direct_cost'] == pytest.approx(6.0, abs=0.05)
+    assert cold['direct_tokens'] > 4_000_000
+
+
+def test_direct_row_stays_visible_on_page_one_without_dropping_users(tmp_path):
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    from direct_usage import DirectUsageStore
+
+    tz = ZoneInfo('Asia/Shanghai')
+    store = DirectUsageStore(tmp_path / 'page1.db', account_id=1, tz='Asia/Shanghai')
+    resets = '2026-12-02T22:08:00+08:00'
+    # Single snapshot -> status='collecting', actual_cost=None (would previously fall off page 1).
+    store.record_snapshot(ts=datetime(2026, 11, 27, 16, 0, tzinfo=tz).timestamp(),
+                          seven_day_used=60.0, seven_day_resets_at=resets,
+                          window_sub2_tokens=300_000_000, window_sub2_cost=366.0)
+
+    async def run():
+        async def handler(request):
+            limit = int(request.url.params['limit'])
+            users = [
+                {'user_id': i + 1, 'email': f'u{i + 1}@example.com', 'requests': 1,
+                 'input_tokens': 1, 'output_tokens': 1, 'cache_tokens': 0,
+                 'total_tokens': 2, 'cost': float(100 - i), 'actual_cost': float(100 - i)}
+                for i in range(5)
+            ]
+            return httpx.Response(200, json={'code': 0, 'data': {'users': users[:limit]}})
+
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test', store=store)
+            service.token, service.token_deadline = 'test', float('inf')
+            p1 = await service.user_breakdown(date(2026, 11, 27), date(2026, 11, 27), 1, 3)
+            p2 = await service.user_breakdown(date(2026, 11, 27), date(2026, 11, 27), 2, 3)
+            assert [u['email'] for u in p1['users']] == ['u1@example.com', 'u2@example.com', '账号直登（估算）']
+            assert [u['email'] for u in p2['users']] == ['u3@example.com', 'u4@example.com', 'u5@example.com']
+            assert p1['has_more'] is True
+            assert p2['has_more'] is False
+
+    asyncio.run(run())

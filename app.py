@@ -309,6 +309,10 @@ class UsageService:
                                 if direct_key > _rank_key(item):
                                     insert_at = idx
                                     break
+                            # Keep the direct-login row visible on page 1 even when its
+                            # current estimate is $0 / pending / below top-N, while keeping
+                            # subsequent pages free of duplicates or missing users.
+                            insert_at = min(insert_at, max(0, page_size - 1))
                             merged.insert(insert_at, direct_row)
                     except Exception:
                         logger.warning('计算账号直登估算用量失败，跳过直登估算。', exc_info=True)

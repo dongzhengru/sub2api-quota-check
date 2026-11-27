@@ -10,6 +10,7 @@ MAX_INTERVAL_SECONDS = 86400
 RESET_TIME_TOLERANCE_SECONDS = 1800
 MIN_CALIBRATION_BLOCK_PERCENT = 2.0
 FALLBACK_CALIBRATION_BLOCK_PERCENT = 0.5
+MIN_WINDOW_FLOOR_PERCENT = 5.0
 SATURATION_PERCENT = 99.5
 RETENTION_DAYS = 400
 
@@ -425,11 +426,37 @@ class DirectUsageStore:
                     )
         return intervals
 
-    def _calibrate(self, intervals):
+    def _window_cost_floor(self, rows):
+        """Conservative lower bound for 100% 7-day quota cost from cumulative window_stats.
+
+        In any unsaturated snapshot with cumulative window_sub2_cost, Sub2API's
+        spend cannot exceed the total 7-day quota spend. Adding 1% to used_percent
+        guards against integer-percent truncation overstating the floor.
+        """
+        floor = None
+        for row in rows or ():
+            used = row.get('seven_day_used')
+            win_cost = row.get('window_sub2_cost')
+            if (
+                used is None
+                or win_cost is None
+                or used < MIN_WINDOW_FLOOR_PERCENT
+                or used >= SATURATION_PERCENT
+                or win_cost <= 0
+            ):
+                continue
+            denom = min(100.0, float(used) + 1.0) / 100.0
+            candidate = float(win_cost) / denom
+            if floor is None or candidate > floor:
+                floor = candidate
+        return floor
+
+    def _calibrate(self, intervals, rows=None):
         """Return (seven_day_cost_basis, mode) where mode is 'manual' | 'auto' | 'pending'."""
         if self.seven_day_cost_override is not None:
             return self.seven_day_cost_override, 'manual'
 
+        window_floor = self._window_cost_floor(rows)
         samples = []
         block_u = 0.0
         block_cost = 0.0
@@ -467,16 +494,21 @@ class DirectUsageStore:
                 block_u = 0.0
                 block_cost = 0.0
 
+        interval_basis = None
         if samples:
             samples.sort()
             if len(samples) == 2:
-                basis = samples[1]
+                interval_basis = samples[1]
             else:
-                basis = _percentile(samples, 0.85)
-            return basis, 'auto'
+                interval_basis = _percentile(samples, 0.85)
+        elif fallback_u >= FALLBACK_CALIBRATION_BLOCK_PERCENT and fallback_cost > 0:
+            interval_basis = (fallback_cost / fallback_u) * 100.0
 
-        if fallback_u >= FALLBACK_CALIBRATION_BLOCK_PERCENT and fallback_cost > 0:
-            return (fallback_cost / fallback_u) * 100.0, 'auto'
+        if interval_basis is not None:
+            basis = max(interval_basis, window_floor) if window_floor is not None else interval_basis
+            return basis, 'auto'
+        if window_floor is not None:
+            return window_floor, 'auto'
 
         return None, 'pending'
 
@@ -487,7 +519,7 @@ class DirectUsageStore:
 
         rows = self._load_snapshots()
         intervals = self._compute_intervals(rows)
-        basis, mode = self._calibrate(intervals)
+        basis, mode = self._calibrate(intervals, rows)
 
         latest = rows[-1] if rows else None
         window_ref = None
@@ -584,6 +616,12 @@ class DirectUsageStore:
             tokens_per_dollar = sub2_tokens / sub2_cost
         elif global_sub2_cost > 0 and global_sub2_tokens > 0:
             tokens_per_dollar = global_sub2_tokens / global_sub2_cost
+        elif (
+            latest is not None
+            and (latest.get('window_sub2_cost') or 0) > 0
+            and (latest.get('window_sub2_tokens') or 0) > 0
+        ):
+            tokens_per_dollar = float(latest['window_sub2_tokens']) / float(latest['window_sub2_cost'])
 
         credit_cost = delta_credits * self.credit_cost_ratio
 

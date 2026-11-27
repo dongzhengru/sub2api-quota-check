@@ -511,7 +511,7 @@ document.querySelectorAll('[data-metric]').forEach(button=>button.addEventListen
  renderActivity();
 }));
 loadActivity();
-(async()=>{try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
+(async()=>{try{const response=await fetch(apiPrefix+'/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
 // 北京时间凌晨 2:00–8:30 暂停自动刷新，仅手动刷新可请求上游。
 function inQuietHours(){const m=Math.floor(Date.now()/60000+480)%1440;return m>=120&&m<510;}
 function autoLoad(){if(inQuietHours()){document.getElementById('quiet-note').hidden=false;return;}load();}
