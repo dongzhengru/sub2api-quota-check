@@ -14,7 +14,7 @@ Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天
 
 额度卡片展示 Sub2API 上游 `window_stats` 的本周期请求数、Token、账号标准成本（`A $`）和用户实际费用（`U $`）。
 
-设置 `SUB2API_COST_ESTIMATION=true` 后，Codex 侧栏可显示满额费用预估和「账号直登（估算）」排行。后端启用 SQLite 快照，从 7 天额度、点数余额和同期 Sub2API 账号成本的变化反推直登费用。估算取决于美元换算基准和快照覆盖范围，可通过 `SUB2API_SEVEN_DAY_COST_EQUIVALENT` 手动设置基准。网页版始终只显示上游用量。
+在 Codex 侧栏点击「查看用量」，勾选「成本估算」即可查看满额费用预估和「账号直登（估算）」排行。开关默认关闭，选择保存在客户端。后端使用 SQLite 快照，从 7 天额度、点数余额和同期 Sub2API 账号成本的变化反推直登费用。估算取决于美元换算基准和快照覆盖范围，可通过 `SUB2API_SEVEN_DAY_COST_EQUIVALENT` 手动设置基准。网页版始终只显示上游用量。
 
 后端接口：`GET /api/user-breakdown?start_date=2026-11-01&end_date=2026-11-06&page=1&page_size=20`，复用后端管理员登录，遇到 401 重登一次。统计按需查询，不使用额度卡片缓存。上游示例只有排名 `limit`，因此翻页按所需数量扩大 `limit`，多取一条判断是否还有下一页，不提供未经上游确认的总人数。此分页方式要求上游遵守请求的 `limit`；如果上游另有数量上限，需要按其实际分页协议调整。
 
@@ -86,7 +86,6 @@ docker run -d --name sub2api-usage \
 | SUB2API_TIMEZONE | 上游和页面使用的时区 | Asia/Shanghai |
 | SUB2API_SHOW_FIVE_HOUR | 是否显示 5 小时窗口；设为 `false`/`0`/`no`/`off` 时 `/api/usage` 的 `five_hour` 返回 `null`，页面与侧栏一起隐藏 | true |
 | SUB2API_QUOTA_PROXY_URL | 本地免密测试模式：指向已登录并部署好的额度服务前缀（如 `https://gateway.zhengru.top/api/quota`），无需配置 `SUB2API_EMAIL`/`SUB2API_PASSWORD` 即可拉取真实数据并在本地记录快照 | 无 |
-| SUB2API_COST_ESTIMATION | 启用成本估算与快照采样 | false |
 | SUB2API_SNAPSHOT_DB | SQLite 额度快照数据库路径；设为 `off`/`false`/`0` 可关闭快照与直登估算 | data/quota_snapshots.db |
 | SUB2API_SNAPSHOT_INTERVAL_SECONDS | 后台自动采样周期（秒）；设为 `0` 关闭后台定时采样，仅在 `/api/usage` 实时查询时记录快照 | 300 |
 | SUB2API_SEVEN_DAY_COST_EQUIVALENT | 手动指定 100% 7 天额度对应的美元基准（如 `200`）；留空时根据快照自动估算 | 自动校准 |

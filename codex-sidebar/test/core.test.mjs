@@ -187,9 +187,10 @@ test('CDP dispatches protocol events to subscribers and ignores unsubscribed met
 
 test('ranking fetch sends date and pagination to fixed gateway, validates and strips fields', async () => {
   const query={start_date:'2026-11-01',end_date:'2026-11-06',page:2,page_size:20};
-  const result=await fetchUserBreakdown(query,{fetcher:async (url,options)=>{
+  const result=await fetchUserBreakdown({...query,include_estimates:true},{fetcher:async (url,options)=>{
     assert.equal(new URL(url).pathname,'/api/quota/api/user-breakdown');
     assert.equal(new URL(url).searchParams.get('page'),'2');
+    assert.equal(new URL(url).searchParams.get('include_estimates'),'true');
     assert.equal(options.redirect,'error');
     return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,
       direct_estimate:{status:'ok',calibration_mode:'auto',seven_day_cost_basis:200,step_cost:2,total_quota_percent:10,direct_quota_percent:7,credits_delta:0,direct_cost:14,direct_tokens:7000000,sample_count:5,coverage_start:'2026-11-01T10:00:00+08:00',coverage_end:'2026-11-06T12:00:00+08:00',is_partial_coverage:true,window_ref:{used_percent:60,sub2_cost:387.55,sub2_user_cost:454.77,sub2_tokens:329320517,sub2_requests:4130,min_full_cost:645.92,direct_cost:0},secret:'drop'},
@@ -209,6 +210,13 @@ test('ranking fetch sends date and pagination to fixed gateway, validates and st
   assert.equal(result.direct_estimate.step_cost,2);
   assert.equal(result.direct_estimate.window_ref.sub2_user_cost,454.77);
   assert.equal(result.direct_estimate.secret,undefined);
+  const defaultResult=await fetchUserBreakdown(query,{fetcher:async url=>{
+    assert.equal(new URL(url).searchParams.get('include_estimates'),'false');
+    return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,
+      users:result.users,direct_estimate:result.direct_estimate});
+  }});
+  assert.equal(defaultResult.users.length,1);
+  assert.equal(defaultResult.direct_estimate,null);
   await assert.rejects(fetchUserBreakdown({...query,start_date:'2026-02-30'}),/参数无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({...query,users:[]})}),/数据无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({detail:'管理员权限不足'},{status:403})}),/管理员权限不足/);

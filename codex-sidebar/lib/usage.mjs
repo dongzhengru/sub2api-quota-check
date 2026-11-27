@@ -22,7 +22,6 @@ export function validateUsage(data) {
   }
   // Only transfer fields the widget actually needs into the renderer.
   return {
-    cost_estimation_enabled: data.cost_estimation_enabled === true,
     five_hour: windows.five_hour, seven_day: windows.seven_day,
     reset_credits: validateResetCredits(data.reset_credits),
     credits: { unlimited: data.credits?.unlimited === true,
@@ -177,6 +176,8 @@ export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
   }
   const url = new URL('./user-breakdown', ENDPOINT);
   for (const key of ['start_date','end_date','page','page_size']) url.searchParams.set(key, query[key]);
+  const includeEstimates = query.include_estimates === true;
+  url.searchParams.set('include_estimates', String(includeEstimates));
   const response = await fetcher(url.toString(), { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000), redirect:'error' });
   if (!response.ok) {
     let detail;
@@ -193,8 +194,8 @@ export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
   return {
     start_date: data.start_date, end_date: data.end_date, page: data.page, page_size: data.page_size,
     timezone: data.timezone, has_more: data.has_more,
-    direct_estimate: sanitizeDirectEstimate(data.direct_estimate),
-    users: data.users.map(user => {
+    direct_estimate: includeEstimates ? sanitizeDirectEstimate(data.direct_estimate) : null,
+    users: data.users.filter(user => includeEstimates || user.is_estimated !== true).map(user => {
       const clean = Object.fromEntries(
         ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost','actual_cost']
           .map(key => [key, key === 'email' ? (typeof user[key] === 'string' ? user[key] : '') : (Number.isFinite(user[key]) ? user[key] : null)])

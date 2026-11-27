@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  const version = 37;
+  const version = 38;
   if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
@@ -20,9 +20,12 @@ function installQuotaWidget(snapshot, options = {}) {
   let waitingForRefresh = false;
   let lastContact = Date.now();
   const COLLAPSED_KEY = 'zhengruQuotaSidebar.collapsed';
+  const COST_ESTIMATION_KEY = 'zhengruQuotaSidebar.costEstimation';
   let collapsed = false;
+  let costEstimation = false;
   // Some renderer contexts deny storage; toggling still works for this session.
   try { collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'; } catch {}
+  try { costEstimation = localStorage.getItem(COST_ESTIMATION_KEY) === 'true'; } catch {}
   let usageRequest = null, usageId = 0, usagePage = 1, usageRange = null, usageDeadline = 0;
   let activityRequest = null, activityId = 0, activityDeadline = 0, activityData = null, activityMetric = 'tokens', activityUser = '', activityBusy = false, activityDay = null;
   const host = document.createElement('div');
@@ -162,7 +165,7 @@ function installQuotaWidget(snapshot, options = {}) {
     <p class="usage-status rank-status" role="status" aria-live="polite" hidden></p><p class="usage-error rank-error" role="alert" hidden></p>
     <p class="usage-status direct-note" hidden></p>
     <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token</th><th aria-sort="descending">费用 ($) ↓</th></tr></thead><tbody></tbody></table></div>
-    <div class="usage-pages"><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
+    <div class="usage-pages"><label><input type="checkbox" class="cost-estimation"> 成本估算</label><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
   const details = root.getElementById('quota-details');
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -287,7 +290,7 @@ function installQuotaWidget(snapshot, options = {}) {
         const acctCost = Number.isFinite(ws.cost) ? ws.cost : Number.isFinite(ws.standard_cost) ? ws.standard_cost : null;
         if (acctCost !== null) wsChips.push(`A $${acctCost.toFixed(2)}`);
         if (Number.isFinite(ws.user_cost)) wsChips.push(`U $${ws.user_cost.toFixed(2)}`);
-        if (current?.data?.cost_estimation_enabled === true && acctCost !== null && acctCost > 0 && Number.isFinite(w.used_percent) && w.used_percent > 0) {
+        if (costEstimation && acctCost !== null && acctCost > 0 && Number.isFinite(w.used_percent) && w.used_percent > 0) {
           wsChips.push(`预计 $${(acctCost / (w.used_percent / 100)).toFixed(2)}`);
         }
       }
@@ -433,12 +436,15 @@ function installQuotaWidget(snapshot, options = {}) {
     const start = new Date(endInput.value+'T00:00:00Z'); start.setUTCDate(start.getUTCDate()-days+1); startInput.value=start.toISOString().slice(0,10);
     root.querySelectorAll('[data-days]').forEach(b => { const active=Number(b.dataset.days)===days; b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active)); });
   }
+  const costEstimationInput = root.querySelector('.cost-estimation');
+  costEstimationInput.checked = costEstimation;
   function queryUsage(page=1, apply=false) {
     if(apply) {
       if(!startInput.value || !endInput.value || startInput.value>endInput.value) { usageError.hidden=false;usageError.textContent='开始日期不能晚于结束日期。';return; }
       usageRange={start_date:startInput.value,end_date:endInput.value};
     }
-    usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value)};
+    usageRequest={id:++usageId,...usageRange,page,page_size:Number(root.querySelector('.usage-size').value),include_estimates:costEstimation};
+    costEstimationInput.disabled = true;
     holdDialog();
     dispatch({kind:'usage',...usageRequest});
     usageDeadline=Date.now()+30000;
@@ -448,6 +454,7 @@ function installQuotaWidget(snapshot, options = {}) {
   function receiveUsage(result) {
     if(result.id!==usageId || !dialog.open)return;
     usageDeadline=0;
+    costEstimationInput.disabled = false;
     releaseDialog();
     if(result.error) {usageStatus.hidden=false;usageStatus.textContent='查询失败，请点击查询重试。';usageError.textContent=result.error;usageError.hidden=false;directNote.hidden=true;directNote.textContent='';root.querySelector('tbody').replaceChildren();return;}
     const data=result.data;usagePage=data.page;
@@ -679,6 +686,12 @@ function installQuotaWidget(snapshot, options = {}) {
   root.querySelector('.usage-filters').addEventListener('submit',e=>{e.preventDefault();queryUsage(1,true);});
   root.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{quickRange(Number(b.dataset.days));queryUsage(1,true);}));
   for(const input of [startInput,endInput]) input.addEventListener('input',()=>{activityDay=null;paintDaySelection();root.querySelectorAll('[data-days]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});});
+  costEstimationInput.addEventListener('change', () => {
+    costEstimation = costEstimationInput.checked;
+    try { localStorage.setItem(COST_ESTIMATION_KEY, String(costEstimation)); } catch {}
+    queryUsage(1);
+    paint();
+  });
   root.querySelector('.usage-size').addEventListener('change',()=>queryUsage(1));
   root.querySelector('.usage-prev').addEventListener('click',()=>queryUsage(usagePage-1));
   root.querySelector('.usage-next').addEventListener('click',()=>queryUsage(usagePage+1));

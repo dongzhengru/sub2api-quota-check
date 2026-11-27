@@ -539,8 +539,7 @@ class UsageService:
                 {'has_credits': False, 'unlimited': False, 'balance': None})
 
     def snapshot(self, hit):
-        return {**copy.deepcopy(self.cached), 'timezone': self.tz,
-                'cost_estimation_enabled': self.store is not None, 'cache': {
+        return {**copy.deepcopy(self.cached), 'timezone': self.tz, 'cache': {
             'hit': hit, 'ttl_seconds': CACHE_SECONDS,
             'remaining_seconds': max(0, math.ceil(self.cache_deadline - time.monotonic())),
             'fetched_at': self.fetched_at,
@@ -606,8 +605,7 @@ async def lifespan(app):
         os.getenv('SUB2API_SNAPSHOT_INTERVAL_SECONDS'),
         DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
     )
-    cost_estimation_enabled = os.getenv('SUB2API_COST_ESTIMATION', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
-    store = _build_snapshot_store(account_id, tz) if cost_estimation_enabled else None
+    store = _build_snapshot_store(account_id, tz)
     base_url = (proxy_url + '/') if proxy_url else os.getenv('SUB2API_BASE_URL', 'https://gateway.zhengru.top').rstrip('/')
     async with httpx.AsyncClient(
         base_url=base_url,
