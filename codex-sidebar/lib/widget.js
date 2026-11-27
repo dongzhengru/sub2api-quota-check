@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  const version = 36;
+  const version = 37;
   if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
@@ -287,7 +287,7 @@ function installQuotaWidget(snapshot, options = {}) {
         const acctCost = Number.isFinite(ws.cost) ? ws.cost : Number.isFinite(ws.standard_cost) ? ws.standard_cost : null;
         if (acctCost !== null) wsChips.push(`A $${acctCost.toFixed(2)}`);
         if (Number.isFinite(ws.user_cost)) wsChips.push(`U $${ws.user_cost.toFixed(2)}`);
-        if (acctCost !== null && acctCost > 0 && Number.isFinite(w.used_percent) && w.used_percent > 0) {
+        if (current?.data?.cost_estimation_enabled === true && acctCost !== null && acctCost > 0 && Number.isFinite(w.used_percent) && w.used_percent > 0) {
           wsChips.push(`预计 $${(acctCost / (w.used_percent / 100)).toFixed(2)}`);
         }
       }

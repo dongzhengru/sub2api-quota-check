@@ -256,7 +256,7 @@ class UsageService:
             proxy_page += 1
         return users, upstream_has_more
 
-    async def user_breakdown(self, start_date, end_date, page, page_size):
+    async def user_breakdown(self, start_date, end_date, page, page_size, include_estimates=True):
         if start_date > end_date:
             raise HTTPException(400, '开始日期不能晚于结束日期。')
         # The upstream exposes a top-N limit, not a page/offset contract.
@@ -290,7 +290,7 @@ class UsageService:
                         break
                 merged = list(users)
                 direct_estimate = None
-                if self.store is not None:
+                if include_estimates and self.store is not None:
                     try:
                         estimate = await asyncio.to_thread(self.store.estimate_range, start_date, end_date)
                         direct_row = estimate.pop('row', None)
@@ -539,7 +539,8 @@ class UsageService:
                 {'has_credits': False, 'unlimited': False, 'balance': None})
 
     def snapshot(self, hit):
-        return {**copy.deepcopy(self.cached), 'timezone': self.tz, 'cache': {
+        return {**copy.deepcopy(self.cached), 'timezone': self.tz,
+                'cost_estimation_enabled': self.store is not None, 'cache': {
             'hit': hit, 'ttl_seconds': CACHE_SECONDS,
             'remaining_seconds': max(0, math.ceil(self.cache_deadline - time.monotonic())),
             'fetched_at': self.fetched_at,
@@ -605,7 +606,8 @@ async def lifespan(app):
         os.getenv('SUB2API_SNAPSHOT_INTERVAL_SECONDS'),
         DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
     )
-    store = _build_snapshot_store(account_id, tz)
+    cost_estimation_enabled = os.getenv('SUB2API_COST_ESTIMATION', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+    store = _build_snapshot_store(account_id, tz) if cost_estimation_enabled else None
     base_url = (proxy_url + '/') if proxy_url else os.getenv('SUB2API_BASE_URL', 'https://gateway.zhengru.top').rstrip('/')
     async with httpx.AsyncClient(
         base_url=base_url,
@@ -653,9 +655,11 @@ async def config():
 @app.get('/api/user-breakdown')
 async def user_breakdown(start_date: date, end_date: date,
                          page: int = Query(1, ge=1, le=10000),
-                         page_size: int = Query(20, ge=1, le=100)):
+                         page_size: int = Query(20, ge=1, le=100),
+                         include_estimates: bool = True):
     from fastapi.responses import JSONResponse
-    return JSONResponse(await app.state.usage.user_breakdown(start_date, end_date, page, page_size),
+    return JSONResponse(await app.state.usage.user_breakdown(
+        start_date, end_date, page, page_size, include_estimates),
                         headers={'Cache-Control': 'no-store'})
 
 

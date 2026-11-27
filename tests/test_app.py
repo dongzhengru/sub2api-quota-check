@@ -837,4 +837,10 @@ def test_direct_row_stays_visible_on_page_one_without_dropping_users(tmp_path):
             assert p1['has_more'] is True
             assert p2['has_more'] is False
 
+            web_page = await service.user_breakdown(
+                date(2026, 11, 27), date(2026, 11, 27), 1, 3, include_estimates=False)
+            assert [user['user_id'] for user in web_page['users']] == [1, 2, 3]
+            assert web_page['has_more'] is True
+            assert web_page['direct_estimate'] is None
+
     asyncio.run(run())

@@ -8,13 +8,13 @@ Python FastAPI 后端 + 无需构建的响应式前端，展示 5 小时、7 天
 
 后端使用只读 `GET /api/v1/admin/accounts/{id}/claude/reset-credits`，不会兑换或消耗重置卡。`GET /api/usage` 新增 `reset_credits`，与额度共享 60 秒缓存；此查询失败会单独返回错误，不影响原有额度展示。需要上游版本支持此接口且查询账号有相应权限，目前接入的是 Claude 重置卡；账号有效期和充值码/订阅套餐期限属于其他信息。本地完成更新后还需更新服务端及侧栏程序。
 
-## 用户 Token 用量与账号直登估算
+## 用户 Token 用量
 
 额度页面下方展示按实际费用降序排列的用户用量，包含请求数、输入、输出、缓存和总 Token、缓存命中率（缓存 / (输入 + 缓存)，保留 1 位小数），以及费用（`actual_cost`，以 $ 显示）。Token 自动换算为 K、M，悬停显示完整数值；费用四舍五入后固定显示 3 位小数，悬停显示完整数值。支持 1 天（今天）、3 天、7 天快捷选择及自定义日期，包含首尾日期，按 `SUB2API_TIMEZONE` 计算。支持每页 20、50、100 条，切换查询范围或每页条数会回到第一页。
 
-针对「有人直接登录上游账号、其余人通过 Sub2API 调用」的场景，额度卡片会直接展示 Sub2API 上游 `window_stats` 的本周期请求数、Token、账号标准成本（`A $`）、用户实际费用（`U $`）及线性预计总费用；同时后端用极简 SQLite 变化去重快照（直接复用 `window_stats`，不再额外请求 `token-activity`）记录 `7 天已用百分比`、`credits.balance` 与同期 `window_stats`，以便将直登消耗按天切分，在 `/api/user-breakdown` 中以 **账号直登（估算）** 合并参与排行，并明确标出快照覆盖时段与 1% 整数步进误差。
-- 100% 7 天额度对应的美元基准（按账号标准成本 `A` 计算）默认从无直登时段与累计窗口下界自动校准，也可通过 `SUB2API_SEVEN_DAY_COST_EQUIVALENT` 手动指定覆盖；若同时产生点数扣费，则按 `SUB2API_CREDIT_COST_RATIO` 叠加计入总消耗。
-- 仅统计启用快照之后的日期区间，启用前的历史日期不虚构直登数据；请求数、输入/输出/缓存 Token 无法反推，统一显示 `—`。
+额度卡片展示 Sub2API 上游 `window_stats` 的本周期请求数、Token、账号标准成本（`A $`）和用户实际费用（`U $`）。
+
+设置 `SUB2API_COST_ESTIMATION=true` 后，Codex 侧栏可显示满额费用预估和「账号直登（估算）」排行。后端启用 SQLite 快照，从 7 天额度、点数余额和同期 Sub2API 账号成本的变化反推直登费用。估算取决于美元换算基准和快照覆盖范围，可通过 `SUB2API_SEVEN_DAY_COST_EQUIVALENT` 手动设置基准。网页版始终只显示上游用量。
 
 后端接口：`GET /api/user-breakdown?start_date=2026-11-01&end_date=2026-11-06&page=1&page_size=20`，复用后端管理员登录，遇到 401 重登一次。统计按需查询，不使用额度卡片缓存。上游示例只有排名 `limit`，因此翻页按所需数量扩大 `limit`，多取一条判断是否还有下一页，不提供未经上游确认的总人数。此分页方式要求上游遵守请求的 `limit`；如果上游另有数量上限，需要按其实际分页协议调整。
 
@@ -86,9 +86,10 @@ docker run -d --name sub2api-usage \
 | SUB2API_TIMEZONE | 上游和页面使用的时区 | Asia/Shanghai |
 | SUB2API_SHOW_FIVE_HOUR | 是否显示 5 小时窗口；设为 `false`/`0`/`no`/`off` 时 `/api/usage` 的 `five_hour` 返回 `null`，页面与侧栏一起隐藏 | true |
 | SUB2API_QUOTA_PROXY_URL | 本地免密测试模式：指向已登录并部署好的额度服务前缀（如 `https://gateway.zhengru.top/api/quota`），无需配置 `SUB2API_EMAIL`/`SUB2API_PASSWORD` 即可拉取真实数据并在本地记录快照 | 无 |
+| SUB2API_COST_ESTIMATION | 启用成本估算与快照采样 | false |
 | SUB2API_SNAPSHOT_DB | SQLite 额度快照数据库路径；设为 `off`/`false`/`0` 可关闭快照与直登估算 | data/quota_snapshots.db |
 | SUB2API_SNAPSHOT_INTERVAL_SECONDS | 后台自动采样周期（秒）；设为 `0` 关闭后台定时采样，仅在 `/api/usage` 实时查询时记录快照 | 300 |
-| SUB2API_SEVEN_DAY_COST_EQUIVALENT | 手动指定 100% 7 天额度对应的美元基准（如 `200`）；留空时从纯 Sub2API 时段自动校准 | 自动校准 |
+| SUB2API_SEVEN_DAY_COST_EQUIVALENT | 手动指定 100% 7 天额度对应的美元基准（如 `200`）；留空时根据快照自动估算 | 自动校准 |
 | SUB2API_CREDIT_COST_RATIO | 1 点数余额（`credits.balance`）折算的美元系数 | 1.0 |
 
 示例中的登录返回 `role=user`，查询示例却使用管理员令牌。`/api/v1/admin/accounts/1/usage` 通常需要管理员权限；如果返回 403，请配置具有该接口访问权限的账号。前端会展示明确的权限错误。页面查询的是配置的固定账号，不是访问者各自的账号。

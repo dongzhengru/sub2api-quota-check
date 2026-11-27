@@ -22,6 +22,7 @@ export function validateUsage(data) {
   }
   // Only transfer fields the widget actually needs into the renderer.
   return {
+    cost_estimation_enabled: data.cost_estimation_enabled === true,
     five_hour: windows.five_hour, seven_day: windows.seven_day,
     reset_credits: validateResetCredits(data.reset_credits),
     credits: { unlimited: data.credits?.unlimited === true,

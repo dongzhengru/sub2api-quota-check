@@ -89,11 +89,6 @@ th:first-child,td:first-child{text-align:left}
 td:first-child{font-family:var(--sans);font-size:13px}
 td small{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-family:var(--mono)}
 tbody tr:hover{background:var(--seg)}
-tbody tr.estimated-row{background:rgba(111,211,192,.07)}
-[data-theme="light"] tbody tr.estimated-row{background:rgba(20,144,124,.06)}
-tbody tr.estimated-row:hover{background:rgba(111,211,192,.13)}
-[data-theme="light"] tbody tr.estimated-row:hover{background:rgba(20,144,124,.11)}
-.direct-note{margin:12px 0 0;color:var(--muted)}
 .pagination{justify-content:flex-end;margin-top:16px;font-family:var(--mono);font-size:11px}
 .status{margin:12px 0;line-height:1.7;font-family:var(--mono);font-size:11px}
 .activity{margin-top:20px}
@@ -157,7 +152,6 @@ tbody tr.estimated-row:hover{background:rgba(111,211,192,.13)}
 <form id="stats-form" class="dates"><label>开始日期 <input type="date" id="start-date" required></label><label>结束日期 <input type="date" id="end-date" required></label><button type="submit">查询</button></form>
 <p id="stats-error" class="error" role="alert" hidden></p>
 <p id="stats-status" class="status" role="status" aria-live="polite">等待查询</p>
-<p id="direct-note" class="status direct-note" hidden></p>
 <div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col" title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th scope="col">总 Token</th><th scope="col" aria-sort="descending" title="actual_cost">费用 ($) ↓</th></tr></thead><tbody id="stats-body"></tbody></table></div>
 <div class="pagination"><label>每页 <select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" id="prev-page" disabled>上一页</button><span id="page-label">第 1 页</span><button type="button" id="next-page" disabled>下一页</button></div>
 </section>
@@ -218,10 +212,6 @@ function renderWindowStats(card,w){
  const acctCost=Number.isFinite(ws.cost)?ws.cost:Number.isFinite(ws.standard_cost)?ws.standard_cost:null;
  if(acctCost!==null)items.push({label:'A ',val:'$'+acctCost.toFixed(2),title:`账号标准成本 (Account Cost)：$${acctCost.toFixed(4)}`});
  if(Number.isFinite(ws.user_cost))items.push({label:'U ',val:'$'+ws.user_cost.toFixed(2),title:`用户实际费用 (User Cost)：$${ws.user_cost.toFixed(4)}`});
- if(acctCost!==null&&acctCost>0&&Number.isFinite(w.used_percent)&&w.used_percent>0){
-  const estFull=acctCost/(w.used_percent/100);
-  items.push({label:'预计总费用 ',val:'$'+estFull.toFixed(2),title:`按当前已用 ${fmt(w.used_percent)}% 线性推算 100% 周期的 Sub2API 账号成本`});
- }
  box.replaceChildren();
  for(const item of items){
   const chip=document.createElement('span');
@@ -294,78 +284,17 @@ function applyRange(){
  }
  statsRange={start_date:startInput.value,end_date:endInput.value};loadStats(1);
 }
-function formatCoverage(startIso,endIso,isPartial){
- if(!startIso||!endIso)return '';
- const parts=iso=>{
-  const d=new Date(iso);
-  if(!Number.isFinite(d.getTime()))return null;
-  return Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:statsZone,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d).map(x=>[x.type,x.value]));
- };
- const s=parts(startIso),e=parts(endIso);
- if(!s||!e)return '';
- const sameDay=s.month===e.month&&s.day===e.day;
- const span=sameDay?`${s.hour}:${s.minute}–${e.hour}:${e.minute}`:`${s.month}/${s.day} ${s.hour}:${s.minute}–${e.month}/${e.day} ${e.hour}:${e.minute}`;
- return (isPartial?'仅覆盖 ':'覆盖 ')+span;
-}
-function formatDirectBasis(est){
- if(!est)return '';
- if(Number.isFinite(est.seven_day_cost_basis)){
-  const mode=est.calibration_mode==='manual'?'手动基准':'自动校准';
-  const step=Number.isFinite(est.step_cost)?` · 1% ≈ $${est.step_cost.toFixed(2)}`:'';
-  return `100% 7天额度 ≈ $${est.seven_day_cost_basis.toFixed(2)}（${mode}）${step}`;
- }
- return '待校准换算基准';
-}
-function formatDirectSub(du){
- if(!du)return '差值反推估算';
- const cov=formatCoverage(du.coverage_start,du.coverage_end,du.is_partial_coverage);
- if(du.status==='collecting')return `${cov?cov+' · ':''}已采 ${du.sample_count||1} 次 · 等待下次对比`;
- if(du.status==='zero'){
-  const bits=[];
-  if(cov)bits.push(cov);
-  bits.push('暂无明显直登');
-  if(Number.isFinite(du.step_cost))bits.push(`精度 ±$${du.step_cost.toFixed(2)}`);
-  return bits.join(' · ');
- }
- const parts=['按账号成本(A)反推'];
- if(cov)parts.push(cov);
- if(Number.isFinite(du.quota_percent)&&du.quota_percent>0)parts.push(`7天额度 ~${fmt(du.quota_percent)}%`);
- if(Number.isFinite(du.credits_delta)&&du.credits_delta>0)parts.push(`点数 -${du.credits_delta.toFixed(2)}`);
- if(du.calibration_mode==='pending'&&parts.length<=2)parts.push('待校准换算基准');
- return parts.join(' · ');
-}
-function formatDirectNote(est){
- if(!est||!est.status)return '';
- const basis=formatDirectBasis(est);
- const cov=formatCoverage(est.coverage_start,est.coverage_end,est.is_partial_coverage);
- const ref=est.window_ref;
- const refText=ref&&Number.isFinite(ref.used_percent)&&Number.isFinite(ref.sub2_cost)
-  ?` · 7天周期累计：已用 ${fmt(ref.used_percent)}%，Sub2API A $${ref.sub2_cost.toFixed(2)}`+(Number.isFinite(ref.sub2_user_cost)?` / U $${ref.sub2_user_cost.toFixed(2)}`:'')+(Number.isFinite(ref.min_full_cost)?`（预计满额 $${ref.min_full_cost.toFixed(2)}）`:''):'';
- if(est.status==='ok'){
-  const bits=['账号直登按账号标准成本(A)差值反推'];
-  if(cov)bits.push(cov);
-  if(Number.isFinite(est.total_quota_percent)&&est.total_quota_percent>0)bits.push(`区间总额度 +${fmt(est.total_quota_percent)}%（直登约 ${fmt(est.direct_quota_percent||0)}%）`);
-  if(Number.isFinite(est.credits_delta)&&est.credits_delta>0)bits.push(`点数消耗 ${est.credits_delta.toFixed(2)}`);
-  bits.push(`基准：${basis}`);
-  return bits.join(' · ')+refText;
- }
- if(est.status==='collecting')return `直登监测已启动（${cov?cov+'，':''}已采 ${est.sample_count||1} 次），等待下次快照对比 · 基准：${basis}${refText}`;
- if(est.status==='zero')return `${cov?cov+' · ':''}区间总额度 +${fmt(est.total_quota_percent||0)}%，暂无明显直登消耗（OpenAI 1% 步进误差${Number.isFinite(est.step_cost)?'约 ±$'+est.step_cost.toFixed(2):''}）· 基准：${basis}${refText}`;
- if(est.status==='pending_calibration')return `${cov?cov+' · ':''}区间总额度 +${fmt(est.total_quota_percent||0)}%，待自动校准或配置 SUB2API_SEVEN_DAY_COST_EQUIVALENT 后反推费用与 Token${refText}`;
- if(est.status==='no_data')return `该日期范围暂无额度快照，账号直登按天统计自启用快照后开始累计${refText}`;
- return '';
-}
 async function loadStats(page){
  if(!statsRange)return;
  const request=++statsRequest;
  if(statsController)statsController.abort();statsController=new AbortController();
- const status=document.getElementById('stats-status'),error=document.getElementById('stats-error'),directNote=document.getElementById('direct-note');
- error.hidden=true;status.hidden=false;status.textContent='正在查询…';directNote.hidden=true;directNote.textContent='';
+ const status=document.getElementById('stats-status'),error=document.getElementById('stats-error');
+ error.hidden=true;status.hidden=false;status.textContent='正在查询…';
  rankLoading();
  document.getElementById('stats-table').setAttribute('aria-busy','true');
  document.getElementById('prev-page').disabled=true;document.getElementById('next-page').disabled=true;
  try{
-  const params=new URLSearchParams({...statsRange,page,page_size:statsSize});
+  const params=new URLSearchParams({...statsRange,page,page_size:statsSize,include_estimates:false});
   const response=await fetch(apiPrefix+'/api/'+'user-breakdown?'+params,{cache:'no-store',signal:statsController.signal,headers:{Accept:'application/json'}});
   const raw=await response.text();let data;
   try{data=JSON.parse(raw);}catch(parseError){throw Error(`用户用量接口返回了无效数据（HTTP ${response.status}）：${raw.slice(0,120)}`);}
@@ -373,44 +302,25 @@ async function loadStats(page){
   if(request!==statsRequest)return;
   const body=document.getElementById('stats-body');
   body.replaceChildren();
-  for(const user of data.users){
-   const isEst=user.is_estimated===true;
+  const users=data.users.filter(user=>user.is_estimated!==true);
+  for(const user of users){
    const row=document.createElement('tr'),identity=document.createElement('td'),id=document.createElement('small');
-   if(isEst){
-    row.className='estimated-row';
-    identity.textContent=user.email||'账号直登（估算）';
-    id.textContent=formatDirectSub(user.direct_usage);
-    const du=user.direct_usage;
-    if(du){
-     const tipParts=['差值反推估算（总消耗 − Sub2API 消耗）'];
-     if(Number.isFinite(du.total_quota_percent))tipParts.push(`区间 7天额度总增量 +${fmt(du.total_quota_percent)}%`);
-     if(Number.isFinite(du.quota_percent))tipParts.push(`直登约占 ${fmt(du.quota_percent)}%`);
-     if(Number.isFinite(du.total_account_cost))tipParts.push(`账号估算总费用 $${du.total_account_cost.toFixed(3)}`);
-     if(Number.isFinite(du.sub2_cost))tipParts.push(`同期 Sub2API 费用 $${du.sub2_cost.toFixed(3)}`);
-     tipParts.push(`换算基准：${formatDirectBasis(du)}`);
-     row.title=tipParts.join(' · ');
-    }
-   }else{
-    identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;
-   }
+   identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;
    identity.append(id);row.append(identity);
    const prompt=user.input_tokens+user.cache_tokens;
    user.cache_hit_rate=Number.isFinite(user.input_tokens)&&Number.isFinite(user.cache_tokens)&&prompt>0?user.cache_tokens/prompt*100:null;
    for(const key of ['requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','actual_cost']){
     const cell=document.createElement('td'),value=user[key];
-    const prefix=isEst&&(key==='total_tokens'||key==='actual_cost')&&Number.isFinite(value)?'~':'';
-    cell.textContent=key==='cache_hit_rate'?(Number.isFinite(value)?value.toFixed(1)+'%':'—'):key.endsWith('tokens')?(Number.isFinite(value)?prefix+formatTokens(value):'—'):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):(Number.isFinite(value)?prefix+formatCost(value):'—');
-    if(Number.isFinite(value))cell.title=(isEst?'估算值：':'')+value.toLocaleString('en-US',{maximumFractionDigits:20});
+    cell.textContent=key==='cache_hit_rate'?(Number.isFinite(value)?value.toFixed(1)+'%':'—'):key.endsWith('tokens')?(Number.isFinite(value)?formatTokens(value):'—'):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):(Number.isFinite(value)?formatCost(value):'—');
+    if(Number.isFinite(value))cell.title=value.toLocaleString('en-US',{maximumFractionDigits:20});
     row.append(cell);
    }
    body.append(row);
   }
-  const noteText=formatDirectNote(data.direct_estimate);
-  directNote.textContent=noteText;directNote.hidden=!noteText;
   statsPage=data.page;document.getElementById('page-label').textContent=`第 ${statsPage} 页`;
   document.getElementById('prev-page').disabled=statsPage<=1;document.getElementById('next-page').disabled=!data.has_more;
-  status.hidden=data.users.length>0;status.textContent=data.users.length?'':'暂无用量记录';
- }catch(e){if(request!==statsRequest)return;document.getElementById('stats-body').replaceChildren();directNote.hidden=true;directNote.textContent='';error.textContent=e.message;error.hidden=false;status.hidden=false;status.textContent='查询失败，请点击查询重试。';}
+  status.hidden=users.length>0;status.textContent=users.length?'':'暂无用量记录';
+ }catch(e){if(request!==statsRequest)return;document.getElementById('stats-body').replaceChildren();error.textContent=e.message;error.hidden=false;status.hidden=false;status.textContent='查询失败，请点击查询重试。';}
  finally{if(request===statsRequest)document.getElementById('stats-table').setAttribute('aria-busy','false');}
 }
 document.querySelectorAll('[data-days]').forEach(b=>b.addEventListener('click',()=>{setQuickRange(Number(b.dataset.days));applyRange();}));
@@ -569,7 +479,25 @@ document.querySelectorAll('[data-metric]').forEach(button=>button.addEventListen
  renderActivity();
 }));
 loadActivity();
-(async()=>{try{const response=await fetch(apiPrefix+'/api/config',{cache:'no-store'});if(!response.ok)throw Error('无法加载时区配置');statsZone=(await response.json()).timezone;document.getElementById('stats-zone').textContent=statsZone;setQuickRange(1);applyRange();}catch(e){const error=document.getElementById('stats-error');error.textContent=e.message;error.hidden=false;}})();
+async function initStats(){
+ for(const path of ['/api/config','/api/usage']){
+  try{
+   const response=await fetch(apiPrefix+path,{cache:'no-store'});
+   if(!response.ok)continue;
+   const {timezone}=await response.json();
+   if(typeof timezone!=='string'||!timezone.trim())continue;
+   new Intl.DateTimeFormat('en-US',{timeZone:timezone});
+   statsZone=timezone;
+   break;
+  }catch{
+   // The quota response also provides the timezone on deployments without /api/config.
+  }
+ }
+ document.getElementById('stats-zone').textContent=statsZone;
+ setQuickRange(1);
+ applyRange();
+}
+initStats();
 // 北京时间凌晨 2:00–8:30 暂停自动刷新，仅手动刷新可请求上游。
 function inQuietHours(){const m=Math.floor(Date.now()/60000+480)%1440;return m>=120&&m<510;}
 function autoLoad(){if(inQuietHours()){document.getElementById('quiet-note').hidden=false;return;}load();}
