@@ -149,7 +149,7 @@ tbody tr:hover{background:var(--seg)}
 <form id="stats-form" class="dates"><label>开始日期 <input type="date" id="start-date" required></label><label>结束日期 <input type="date" id="end-date" required></label><button type="submit">查询</button></form>
 <p id="stats-error" class="error" role="alert" hidden></p>
 <p id="stats-status" class="status" role="status" aria-live="polite">等待查询</p>
-<div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col" title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th scope="col">总 Token ↓</th><th scope="col" title="cost">费用 ($)</th></tr></thead><tbody id="stats-body"></tbody></table></div>
+<div class="tablewrap" id="stats-table"><table><thead><tr><th scope="col">用户</th><th scope="col">请求数</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">缓存 Token</th><th scope="col" title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th scope="col">总 Token</th><th scope="col" aria-sort="descending" title="actual_cost">费用 ($) ↓</th></tr></thead><tbody id="stats-body"></tbody></table></div>
 <div class="pagination"><label>每页 <select id="page-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" id="prev-page" disabled>上一页</button><span id="page-label">第 1 页</span><button type="button" id="next-page" disabled>下一页</button></div>
 </section>
 <section class="card breakdown activity" aria-labelledby="activity-title">
@@ -276,7 +276,7 @@ async function loadStats(page){
    identity.textContent=user.email||'未知用户';id.textContent='ID '+user.user_id;identity.append(id);row.append(identity);
    const prompt=user.input_tokens+user.cache_tokens;
    user.cache_hit_rate=Number.isFinite(user.input_tokens)&&Number.isFinite(user.cache_tokens)&&prompt>0?user.cache_tokens/prompt*100:null;
-   for(const key of ['requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','cost']){
+   for(const key of ['requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','actual_cost']){
     const cell=document.createElement('td'),value=user[key];
     cell.textContent=key==='cache_hit_rate'?(Number.isFinite(value)?value.toFixed(1)+'%':'—'):key.endsWith('tokens')?formatTokens(value):key==='requests'?(Number.isFinite(value)?value.toLocaleString('zh-CN'):'—'):formatCost(value);
     if(Number.isFinite(value))cell.title=value.toLocaleString('en-US',{maximumFractionDigits:20});
@@ -357,12 +357,12 @@ function renderActivity(){
  const map=new Map(activityData.trend.map(row=>[row.date,row]));
  const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
  const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);
- const value=row=>activityMetric==='cost'?(row?.cost??0):(row?.total_tokens??0);
+ const value=row=>activityMetric==='cost'?(row?.actual_cost??0):(row?.total_tokens??0);
  const cells=[],nonzero=[];let totalTokens=0,totalCost=0,active=0;
  for(let i=0;i<days;i++){
   const date=new Date(start.getTime()+i*864e5).toISOString().slice(0,10),row=map.get(date),v=value(row);
   if(v>0){nonzero.push(v);active++;}
-  totalTokens+=row?.total_tokens||0;totalCost+=row?.cost||0;
+  totalTokens+=row?.total_tokens||0;totalCost+=row?.actual_cost||0;
   cells.push({date,row,v});
  }
  nonzero.sort((a,b)=>a-b);
@@ -376,7 +376,7 @@ function renderActivity(){
   else{
    const entry=cells[index];
    cell.dataset.level=String(level(entry.v));cell.dataset.date=entry.date;
-   cell.setAttribute('aria-label',`${entry.date}：${formatTokens(entry.row?.total_tokens??0)} Token，${formatCost(entry.row?.cost??0)}`);
+   cell.setAttribute('aria-label',`${entry.date}：${formatTokens(entry.row?.total_tokens??0)} Token，${formatCost(entry.row?.actual_cost??0)}`);
   }
   frag.append(cell);
  }
@@ -404,7 +404,7 @@ function showActivityTip(cell){
  const lines=[
   `${cell.dataset.date} · ${WEEKDAYS[d.getUTCDay()]}`,
   `Token ${formatTokens(row?.total_tokens??0)}`,
-  `费用 ${formatCost(row?.cost??0)}`,
+  `费用 ${formatCost(row?.actual_cost??0)}`,
   `请求 ${(row?.requests??0).toLocaleString('zh-CN')}`,
   `输入 ${formatTokens(row?.input_tokens??0)} · 输出 ${formatTokens(row?.output_tokens??0)}`,
   `缓存 ${formatTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,

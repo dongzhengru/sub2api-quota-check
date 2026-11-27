@@ -157,7 +157,7 @@ function installQuotaWidget(snapshot, options = {}) {
     <div class="hm-foot"><div class="hm-legend" aria-hidden="true">少 <span class="hm-cell" data-level="0"></span><span class="hm-cell" data-level="1"></span><span class="hm-cell" data-level="2"></span><span class="hm-cell" data-level="3"></span><span class="hm-cell" data-level="4"></span> 多</div><div class="hm-summary"></div></div></section>
     <form class="usage-filters"><div class="seg" role="group" aria-label="快捷日期"><button type="button" data-days="1">1 天</button><button type="button" data-days="3">3 天</button><button type="button" data-days="7">7 天</button></div><div class="usage-dates"><label>开始 <input type="date" class="usage-start" required></label><label>结束 <input type="date" class="usage-end" required></label><button type="submit">查询</button></div></form>
     <p class="usage-status rank-status" role="status" aria-live="polite" hidden></p><p class="usage-error rank-error" role="alert" hidden></p>
-    <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token ↓</th><th>费用 ($)</th></tr></thead><tbody></tbody></table></div>
+    <div class="usage-scroll"><table><thead><tr><th>用户</th><th>请求数</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th title="缓存 Token / (输入 + 缓存 Token)">缓存命中率</th><th>总 Token</th><th aria-sort="descending">费用 ($) ↓</th></tr></thead><tbody></tbody></table></div>
     <div class="usage-pages"><label>每页 <select class="usage-size"><option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><button type="button" class="usage-prev" disabled>上一页</button><span class="usage-page">第 1 页</span><button type="button" class="usage-next" disabled>下一页</button></div></dialog>`;
   const toggle = root.querySelector('.toggle');
   const details = root.getElementById('quota-details');
@@ -367,11 +367,11 @@ function installQuotaWidget(snapshot, options = {}) {
       const row=document.createElement('tr');
       const prompt=user.input_tokens+user.cache_tokens;
       user.cache_hit_rate=Number.isFinite(user.input_tokens)&&Number.isFinite(user.cache_tokens)&&prompt>0?user.cache_tokens/prompt*100:null;
-      for(const key of ['email','requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','cost']) {
+      for(const key of ['email','requests','input_tokens','output_tokens','cache_tokens','cache_hit_rate','total_tokens','actual_cost']) {
         const cell=document.createElement('td'),n=user[key];
         if(key==='email')cell.textContent=n || `用户 ${user.user_id}`;
         else if(!Number.isFinite(n))cell.textContent='—';
-        else {cell.title=String(n);cell.textContent=key==='cost'?'$'+n.toFixed(3):key==='cache_hit_rate'?n.toFixed(1)+'%':key.endsWith('tokens')?(Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US')):n.toLocaleString('en-US');}
+        else {cell.title=String(n);cell.textContent=key==='actual_cost'?'$'+n.toFixed(3):key==='cache_hit_rate'?n.toFixed(1)+'%':key.endsWith('tokens')?(Math.abs(n)>=999995?(n/1e6).toLocaleString('en-US',{maximumFractionDigits:2})+' M':Math.abs(n)>=1000?(n/1e3).toLocaleString('en-US',{maximumFractionDigits:2})+' K':n.toLocaleString('en-US')):n.toLocaleString('en-US');}
         if(key==='total_tokens')cell.className='strong';
         row.append(cell);
       }
@@ -436,12 +436,12 @@ function installQuotaWidget(snapshot, options = {}) {
     const map=new Map(activityData.trend.map(row=>[row.date,row]));
     const start=new Date(activityData.start_date+'T00:00:00Z'),end=new Date(activityData.end_date+'T00:00:00Z');
     const days=Math.round((end-start)/864e5)+1,lead=start.getUTCDay(),cols=Math.ceil((lead+days)/7);
-    const value=row=>activityMetric==='cost'?(row?.cost??0):(row?.total_tokens??0);
+    const value=row=>activityMetric==='cost'?(row?.actual_cost??0):(row?.total_tokens??0);
     const cells=[],nonzero=[];let totalTokens=0,totalCost=0,active=0;
     for(let i=0;i<days;i++){
       const date=new Date(start.getTime()+i*864e5).toISOString().slice(0,10),row=map.get(date),v=value(row);
       if(v>0){nonzero.push(v);active++;}
-      totalTokens+=row?.total_tokens||0;totalCost+=row?.cost||0;
+      totalTokens+=row?.total_tokens||0;totalCost+=row?.actual_cost||0;
       cells.push({date,row,v});
     }
     nonzero.sort((a,b)=>a-b);
@@ -455,7 +455,7 @@ function installQuotaWidget(snapshot, options = {}) {
       else{
         const entry=cells[index];
         cell.dataset.level=String(level(entry.v));cell.dataset.date=entry.date;
-        cell.setAttribute('aria-label',`${entry.date}：${fmtTokens(entry.row?.total_tokens??0)} Token，${fmtCost(entry.row?.cost??0)}`);
+        cell.setAttribute('aria-label',`${entry.date}：${fmtTokens(entry.row?.total_tokens??0)} Token，${fmtCost(entry.row?.actual_cost??0)}`);
       }
       frag.append(cell);
     }
@@ -494,7 +494,7 @@ function installQuotaWidget(snapshot, options = {}) {
     const lines=[
       `${cell.dataset.date} · ${WEEKDAYS[d.getUTCDay()]}`,
       `Token ${fmtTokens(row?.total_tokens??0)}`,
-      `费用 ${fmtCost(row?.cost??0)}`,
+      `费用 ${fmtCost(row?.actual_cost??0)}`,
       `请求 ${(row?.requests??0).toLocaleString('en-US')}`,
       `输入 ${fmtTokens(row?.input_tokens??0)} · 输出 ${fmtTokens(row?.output_tokens??0)}`,
       `缓存 ${fmtTokens((row?.cache_read_tokens??0)+(row?.cache_creation_tokens??0))}`,

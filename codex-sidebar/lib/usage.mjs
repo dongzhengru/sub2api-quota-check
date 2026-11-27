@@ -120,7 +120,7 @@ export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
   }
   return { start_date: data.start_date, end_date: data.end_date, page:data.page, page_size:data.page_size,
     timezone:data.timezone, has_more:data.has_more, users:data.users.map(user => Object.fromEntries(
-      ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost']
+      ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost','actual_cost']
         .map(key => [key, key === 'email' ? (typeof user[key] === 'string' ? user[key] : '') : (Number.isFinite(user[key]) ? user[key] : null)]))) };
 }
 

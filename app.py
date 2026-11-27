@@ -176,7 +176,7 @@ class UsageService:
                     response = await self.client.get(
                         '/api/v1/admin/dashboard/user-breakdown',
                         params={'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
-                                'sort_by': 'total_tokens', 'limit': offset + page_size + 1,
+                                'sort_by': 'actual_cost', 'limit': offset + page_size + 1,
                                 'timezone': self.tz},
                         headers={'Authorization': 'Bearer ' + self.token},
                     )

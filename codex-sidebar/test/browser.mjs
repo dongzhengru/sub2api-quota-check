@@ -23,10 +23,10 @@ let dashboardUsage;
 let dashboardStatus = 200;
 const isoDay = d => d.toISOString().slice(0,10);
 const activityEnd = new Date(), activityStart = new Date(activityEnd.getTime() - 364*86400000);
-const activityRow = (date,total,cost) => ({date,requests:10,input_tokens:100,output_tokens:50,cache_creation_tokens:0,cache_read_tokens:1000,total_tokens:total,cost,actual_cost:cost});
+const activityRow = (date,total,actual_cost,cost=actual_cost) => ({date,requests:10,input_tokens:100,output_tokens:50,cache_creation_tokens:0,cache_read_tokens:1000,total_tokens:total,cost,actual_cost});
 const dashboardActivity = { start_date:isoDay(activityStart), end_date:isoDay(activityEnd), timezone:'Asia/Shanghai', user:null,
   users:[{email:'dzr@sub2api.com',username:'董政儒'},{email:'zzy@sub2api.com',username:''}],
-  trend:[activityRow(isoDay(activityEnd),50000000,12.5),activityRow(isoDay(new Date(activityEnd.getTime()-86400000)),1000000,0.4),activityRow(isoDay(new Date(activityEnd.getTime()-2*86400000)),100000,0.05),activityRow(isoDay(new Date(activityEnd.getTime()-3*86400000)),10000,0.001)] };
+  trend:[activityRow(isoDay(activityEnd),50000000,69.71516184,46.47677456),activityRow(isoDay(new Date(activityEnd.getTime()-86400000)),1000000,0.4),activityRow(isoDay(new Date(activityEnd.getTime()-2*86400000)),100000,0.05),activityRow(isoDay(new Date(activityEnd.getTime()-3*86400000)),10000,0.001)] };
 const dashboardHtml = await readFile(new URL('../../static/index.html', import.meta.url),'utf8');
 let httpDelay = 0;
 const server = createServer((request, response) => {
@@ -174,10 +174,10 @@ try {
   let query = await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeUsageRequest()`);
   assert.equal(query.start_date,query.end_date);assert.equal(query.page,1);
   assert.equal(await cdp.evaluate(`window.__quotaDispatches.filter(m => m.kind === 'usage').at(-1).id`), query.id, 'Usage query dispatches immediately through the binding');
-  const usageResult = { id:query.id, data:{...query,timezone:'Asia/Shanghai',has_more:true,users:[{user_id:1,email:'<img src=x onerror=alert(1)>',requests:225,input_tokens:1254036,output_tokens:106773,cache_tokens:16050688,total_tokens:17411497,cost:4.57638018}]} };
+  const usageResult = { id:query.id, data:{...query,timezone:'Asia/Shanghai',has_more:true,users:[{user_id:1,email:'<img src=x onerror=alert(1)>',requests:225,input_tokens:1254036,output_tokens:106773,cache_tokens:16050688,total_tokens:17411497,cost:46.47677456,actual_cost:69.71516184}]} };
   await cdp.evaluate(`window.__zhengruQuotaSidebarV1.receiveUsage(${JSON.stringify(usageResult)})`);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /17.41 M/);
-  assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$4.576/);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /\$69\.715/);
   assert.match(await cdp.evaluate(`${ui}.querySelector('tbody').textContent`), /92\.8%/);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody img') === null`),true);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('tbody .skel-row')===null`),true,'Skeleton rows replaced by results');
@@ -200,7 +200,7 @@ try {
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.activity img')===null`),true);
   await cdp.evaluate(`${ui}.querySelector('[data-metric="cost"]').click()`);
   assert.equal(await cdp.evaluate(`window.__zhengruQuotaSidebarV1.takeActivityRequest()`),null,'Metric toggle re-renders without refetching');
-  assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-summary').textContent`),/\$12\.951/);
+  assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-summary').textContent`),/\$70\.166/);
   await cdp.evaluate(`${ui}.querySelector('.hm-cell[data-level="4"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}))`);
   assert.equal(await cdp.evaluate(`${ui}.querySelector('.hm-tip').hidden`),false);
   assert.match(await cdp.evaluate(`${ui}.querySelector('.hm-tip').textContent`),/50 M/);

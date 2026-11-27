@@ -198,11 +198,11 @@ def test_user_breakdown_pagination_and_relogin():
             assert request.url.params['start_date'] == '2026-11-01'
             assert request.url.params['end_date'] == '2026-11-06'
             assert request.url.params['timezone'] == 'Asia/Shanghai'
-            assert request.url.params['sort_by'] == 'total_tokens'
+            assert request.url.params['sort_by'] == 'actual_cost'
             limit = int(request.url.params['limit'])
             limits.append(limit)
             return httpx.Response(200, json={'code': 0, 'data': {
-                'users': [{'user_id': i} for i in range(55)][:limit]}})
+                'users': [{'user_id': i, 'actual_cost': 55 - i, 'total_tokens': i} for i in range(55)][:limit]}})
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
             service = UsageService(client, 'test', 'test')
             service.token, service.token_deadline = 'expired', float('inf')
@@ -211,6 +211,7 @@ def test_user_breakdown_pagination_and_relogin():
             assert limits == [21, 41, 61]
             assert [p['has_more'] for p in pages] == [True, True, False]
             assert [u['user_id'] for p in pages for u in p['users']] == list(range(55))
+            assert [u['actual_cost'] for p in pages for u in p['users']] == list(range(55, 0, -1))
     asyncio.run(run())
 
 
