@@ -282,6 +282,7 @@ function Refresh-Status {
             if ($Show) { Show-Alert '后台状态' $result.Output }
             return
         }
+        $costEstimationItem.Checked = [bool]$status.costEstimation
         $running = [bool]$status.running
         $connected = [bool]$status.connected
         $pages = [int]$status.pages
@@ -663,6 +664,19 @@ $stopItem.Enabled = $false
 $separator2 = New-Object System.Windows.Forms.ToolStripSeparator
 $separator2.Margin = $separatorMargin
 [void]$menu.Items.Add($separator2)
+
+$costEstimationItem = New-Object System.Windows.Forms.ToolStripMenuItem('成本估算')
+$costEstimationItem.Padding = $itemPadding
+$costEstimationItem.Add_Click({
+    if ($script:busy -or $script:quitting) { return }
+    $value = if ($costEstimationItem.Checked) { 'off' } else { 'on' }
+    Invoke-QuotaCommand @('cost-estimation', $value) {
+        param($result)
+        if ($result.Code -ne 0) { Show-Alert '无法切换成本估算' $result.Output }
+        Refresh-Status $false
+    }
+})
+[void]$menu.Items.Add($costEstimationItem)
 
 $statusItem = New-Object System.Windows.Forms.ToolStripMenuItem('查看状态…')
 $statusItem.Image = New-MenuGlyphBitmap 'info' $glyphSize $glyphInk

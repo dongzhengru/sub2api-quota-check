@@ -68,7 +68,7 @@ export async function runDaemon({ ports, port, poller = new UsagePoller(), ...op
     log: message => (options.log || console.log)(`[${port}] ${message}`) })));
 }
 
-async function runEndpoint({ port, selector, theme = async () => 'auto', signal, poller, log, dependencies = {} }) {
+async function runEndpoint({ port, selector, theme = async () => 'auto', costEstimation = async () => false, signal, poller, log, dependencies = {} }) {
   const verify = dependencies.verify || assertAppListener;
   const targetsForPort = dependencies.targets || listTargets;
   const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
@@ -85,7 +85,7 @@ async function runEndpoint({ port, selector, theme = async () => 'auto', signal,
   const drop = id => { sessions.delete(id); meta.delete(id); };
   const runUsage = (id, client, request) => {
     const state = meta.get(id); state.usage = request.id; state.usageBusy = true;
-    void usageFetch(request).then(
+    void costEstimation().then(enabled => usageFetch({ ...request, include_estimates: enabled })).then(
       data => ({id:request.id,data}), error => ({id:request.id,error:error.message || '用量查询失败'})
     ).then(result => client.evaluate(`if (${TRUSTED_PAGE}) window.__zhengruQuotaSidebarV1?.receiveUsage?.(${JSON.stringify(result)})`))
       .catch(() => {}).finally(() => { if (meta.get(id) === state) state.usageBusy = false; });

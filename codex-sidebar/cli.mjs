@@ -21,6 +21,10 @@ const STATE = process.env.CODEX_QUOTA_STATE_DIR ? path.resolve(process.env.CODEX
 const STATE_FILE = path.join(STATE, 'daemon.json');
 const LOG = path.join(STATE, 'sidebar.log');
 const THEME_FILE = path.join(STATE, 'theme.json');
+const COST_ESTIMATION_FILE = path.join(STATE, 'cost-estimation');
+async function readCostEstimation() {
+  return (await readFile(COST_ESTIMATION_FILE, 'utf8').catch(() => '')).trim() === 'on';
+}
 const THEME_LABELS = { auto: '跟随系统', light: '浅色', dark: '深色' };
 async function readTheme() {
   try {
@@ -202,6 +206,13 @@ async function main() {
       console.log(`外观：${THEME_LABELS[value]}`);
       break;
     }
+    case 'cost-estimation': {
+      const requested = args[0];
+      if (!['on', 'off'].includes(requested)) throw new Error('成本估算设置仅接受 on 或 off');
+      await mkdir(STATE, { recursive: true, mode: 0o700 });
+      await writeFile(COST_ESTIMATION_FILE, requested, { mode: 0o600 });
+      break;
+    }
     case 'launch': await launch(); console.log('客户端 CDP 已就绪'); break;
     case 'run': {
       const controller = new AbortController();
@@ -214,7 +225,7 @@ async function main() {
       process.once('SIGINT', () => controller.abort());
       const log = message => console.log(`${new Date().toISOString()} ${message}`);
       log(`额度侧栏后台已启动，CDP 127.0.0.1 端口 ${ports.join(', ')}`);
-      try { await runDaemon({ ports, selector: option('selector'), theme: readTheme, signal: controller.signal, log }); }
+      try { await runDaemon({ ports, selector: option('selector'), theme: readTheme, costEstimation: readCostEstimation, signal: controller.signal, log }); }
       finally {
         if (stopTimer) clearInterval(stopTimer);
         if (stopFile) await unlink(stopFile).catch(() => {});
@@ -235,7 +246,7 @@ async function main() {
       const error = connected ? null : endpoints.map(value => `${value.port}: ${value.error}`).join('；');
       const appearance = await readTheme();
       if (args.includes('--json')) {
-        console.log(JSON.stringify({ running, connected, pages, endpoints, port: activePort, pid: running ? state.pid : null, log: LOG, error, theme: appearance }));
+        console.log(JSON.stringify({ running, connected, pages, endpoints, port: activePort, pid: running ? state.pid : null, log: LOG, error, theme: appearance, costEstimation: await readCostEstimation() }));
       } else {
         console.log(running ? `后台运行中（PID ${state.pid}）` : '后台未运行');
         console.log(connected ? `CDP 本机端口 ${activePort} 正常；可连接的应用页面：${pages}` : `CDP 未就绪：${error}`);

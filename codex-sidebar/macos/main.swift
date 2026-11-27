@@ -62,6 +62,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var updateItem: NSMenuItem!
     private var automaticUpdateItem: NSMenuItem!
     private var updateLabel: NSMenuItem!
+    private var costEstimationItem: NSMenuItem!
     private var themeItems: [String: NSMenuItem] = [:]
     private var quitItem: NSMenuItem!
     private var uninstallItem: NSMenuItem!
@@ -100,6 +101,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dlpItem = add(menu, "连接 DLP 客户端额度", #selector(connectDlp))
         stopItem = add(menu, "停止额度显示", #selector(stopQuota))
         menu.addItem(.separator())
+        costEstimationItem = add(menu, "成本估算", #selector(toggleCostEstimation))
         let themeMenu = NSMenu()
         themeMenu.autoenablesItems = false
         for (value, title) in [("auto", "自动（跟随系统）"), ("light", "浅色"), ("dark", "深色")] {
@@ -173,6 +175,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quitItem.isEnabled = !value && !updateInProgress
         uninstallItem.isEnabled = !value && !updateInProgress
         updateItem.isEnabled = !value && !updateInProgress
+        costEstimationItem.isEnabled = !value && !updateInProgress
         for item in themeItems.values { item.isEnabled = !value && !updateInProgress }
         if value { statusLabel.title = "正在处理…" }
     }
@@ -248,6 +251,7 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             self.lastStatus = status
+            self.costEstimationItem.state = (status["costEstimation"] as? Bool == true) ? .on : .off
             if let value = status["theme"] as? String { self.applyTheme(value) }
             let running = status["running"] as? Bool ?? false
             let connected = status["connected"] as? Bool ?? false
@@ -295,6 +299,13 @@ final class QuotaApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wanted = false
         perform(["stop"]) { result in
             if result.code != 0 { self.alert("无法停止额度", result.output) }
+            self.refreshStatus(recover: false)
+        }
+    }
+    @objc private func toggleCostEstimation() {
+        let value = costEstimationItem.state == .on ? "off" : "on"
+        perform(["cost-estimation", value]) { result in
+            if result.code != 0 { self.alert("无法切换成本估算", result.output) }
             self.refreshStatus(recover: false)
         }
     }

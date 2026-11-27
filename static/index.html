@@ -59,9 +59,6 @@ main{width:100%;max-width:1000px;margin:0 auto;padding:36px 24px 48px}
 .fill{width:0;height:100%;border-radius:99px;background:var(--accent);transition:width .7s}
 .legend{display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:11px;margin-top:10px;color:var(--muted)}
 .legend b{font-weight:600;color:var(--ink)}
-.wstats{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
-.wstats span{padding:3px 8px;border-radius:7px;background:var(--seg);border:1px solid var(--line);font-variant-numeric:tabular-nums}
-.wstats span b{font-weight:600;color:var(--ink)}
 .reset{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .reset time{color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
 .countdown{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;margin-top:8px;line-height:1.6}
@@ -143,8 +140,8 @@ tbody tr:hover{background:var(--seg)}
  <div class="cell"><div class="value" id="last-updated">—</div><div class="label">上次查询 · Updated</div><div class="detail" id="cache-state">等待查询</div></div>
 </div>
 <div class="cards">
-<section class="card quota" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2><span class="tag">Session</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="wstats" hidden></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
-<section class="card quota" id="seven_day"><div class="cardhead"><h2>7 天额度</h2><span class="tag">Weekly</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="wstats" hidden></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
+<section class="card quota" id="five_hour"><div class="cardhead"><h2>5 小时额度</h2><span class="tag">Session</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
+<section class="card quota" id="seven_day"><div class="cardhead"><h2>7 天额度</h2><span class="tag">Weekly</span></div><div class="metric"><span class="number">—</span><span class="percent">%</span><span class="left">left</span></div><div class="bar" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><div class="legend"><span>已使用 <b class="used">—</b></span><span>剩余 <b class="remaining">—</b></span></div><div class="reset"><span>下次重置</span><time>等待查询</time></div><div class="countdown">—</div><p class="error" role="alert" hidden></p></section>
 </div>
 <section class="card breakdown" aria-labelledby="breakdown-title">
 <div class="cardhead"><h2 id="breakdown-title">用户 Token 用量</h2><span id="stats-zone"></span></div>
@@ -195,33 +192,6 @@ function tick(){
   document.querySelector('#'+key+' .countdown').textContent=seconds?`Reset ${days?days+'d ':''}${hours}h ${minutes}m`:'已到重置时间，等待上游更新';
  }
 }
-function formatReqCount(value){
- if(!Number.isFinite(value))return null;
- if(value>=1e6)return (value/1e6).toLocaleString('en-US',{maximumFractionDigits:1})+'M req';
- if(value>=1000)return (value/1e3).toLocaleString('en-US',{maximumFractionDigits:1})+'K req';
- return value.toLocaleString('zh-CN')+' req';
-}
-function renderWindowStats(card,w){
- const box=card.querySelector('.wstats');
- const ws=w&&typeof w.window_stats==='object'?w.window_stats:null;
- if(!ws){box.replaceChildren();box.hidden=true;return;}
- const items=[];
- const req=formatReqCount(ws.requests);
- if(req)items.push({text:req,title:`本周期 Sub2API 请求数：${ws.requests.toLocaleString('zh-CN')}`});
- if(Number.isFinite(ws.tokens))items.push({text:formatTokens(ws.tokens),title:`本周期 Sub2API 总 Token：${ws.tokens.toLocaleString('zh-CN')}`});
- const acctCost=Number.isFinite(ws.cost)?ws.cost:Number.isFinite(ws.standard_cost)?ws.standard_cost:null;
- if(acctCost!==null)items.push({label:'A ',val:'$'+acctCost.toFixed(2),title:`账号标准成本 (Account Cost)：$${acctCost.toFixed(4)}`});
- if(Number.isFinite(ws.user_cost))items.push({label:'U ',val:'$'+ws.user_cost.toFixed(2),title:`用户实际费用 (User Cost)：$${ws.user_cost.toFixed(4)}`});
- box.replaceChildren();
- for(const item of items){
-  const chip=document.createElement('span');
-  if(item.title)chip.title=item.title;
-  if(item.val){chip.append(item.label);const b=document.createElement('b');b.textContent=item.val;chip.append(b);}
-  else chip.textContent=item.text;
-  box.append(chip);
- }
- box.hidden=!items.length;
-}
 async function load(){
  if(busy)return;busy=true;
  try{
@@ -237,7 +207,6 @@ async function load(){
    card.querySelector('.remaining').textContent=fmt(w.remaining_percent)+'%';
    card.querySelector('.fill').style.width=Math.min(100,w.remaining_percent)+'%';
    card.querySelector('.bar').setAttribute('aria-valuenow',Math.min(100,w.remaining_percent));
-   renderWindowStats(card,w);
    card.querySelector('time').textContent=dateFmt.format(new Date(w.resets_at));
    card.querySelector('time').dateTime=w.resets_at;
   }
