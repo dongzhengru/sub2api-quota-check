@@ -391,6 +391,7 @@ class UsageService:
             result = {
                 'updated_at': data.get('updated_at'),
                 **windows,
+                'concurrency': self.parse_concurrency(data.get('concurrency')),
                 'reset_credits': data.get('reset_credits') or {'available_count': None, 'credits': [], 'error': None},
                 'credits': data.get('credits') or {'has_credits': False, 'unlimited': False, 'balance': None},
             }
@@ -417,7 +418,8 @@ class UsageService:
                 raise HTTPException(502, '上游未返回有效的 7 天额度。')
             reset_credits, credits = await self.fetch_openai_quota()
             result = {'updated_at': data.get('updated_at'), **windows,
-                      'reset_credits': reset_credits, 'credits': credits}
+                      'reset_credits': reset_credits, 'credits': credits,
+                      'concurrency': await self.fetch_concurrency()}
             await self.record_snapshot_from_usage(result)
             return result
 
@@ -494,6 +496,33 @@ class UsageService:
             'resets_at': reset,
             'window_stats': UsageService.parse_window_stats(window.get('window_stats')),
         }
+
+    @staticmethod
+    def parse_concurrency(account):
+        if not isinstance(account, dict):
+            return None
+        current = account.get('current_in_use')
+        capacity = account.get('max_capacity')
+        if type(current) is not int or current < 0:
+            return None
+        return {'current_in_use': current,
+                'max_capacity': capacity if type(capacity) is int and capacity > 0 else None}
+
+    async def fetch_concurrency(self):
+        try:
+            response = await self.client.get(
+                '/api/v1/admin/ops/concurrency',
+                params={'timezone': self.tz},
+                headers={'Authorization': 'Bearer ' + self.token},
+                timeout=3.0,
+            )
+            data = self.unpack(response, stage='并发查询')
+        except (HTTPException, httpx.RequestError):
+            return None
+        accounts = data.get('account')
+        if data.get('enabled') is not True or not isinstance(accounts, dict):
+            return None
+        return self.parse_concurrency(accounts.get(str(self.account_id)))
 
     async def fetch_openai_quota(self):
         try:

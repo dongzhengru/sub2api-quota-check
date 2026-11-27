@@ -20,8 +20,14 @@ export function validateUsage(data) {
     const creditsOnly = data.five_hour === null && data.seven_day === null && (hasBalance || data.credits?.unlimited === true);
     if (!creditsOnly) throw new Error('额度响应缺少有效额度窗口');
   }
+  const current = data.concurrency?.current_in_use;
+  const capacity = data.concurrency?.max_capacity;
   // Only transfer fields the widget actually needs into the renderer.
   return {
+    concurrency: Number.isSafeInteger(current) && current >= 0 ? {
+      current_in_use: current,
+      max_capacity: Number.isSafeInteger(capacity) && capacity > 0 ? capacity : null,
+    } : null,
     five_hour: windows.five_hour, seven_day: windows.seven_day,
     reset_credits: validateResetCredits(data.reset_credits),
     credits: { unlimited: data.credits?.unlimited === true,

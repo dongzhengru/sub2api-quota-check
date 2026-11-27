@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  const version = 39;
+  const version = 40;
   if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
@@ -59,6 +59,11 @@ function installQuotaWidget(snapshot, options = {}) {
       @keyframes dlg-out{to{opacity:0;transform:translateY(10px)}}
       @keyframes bd-in{from{opacity:0}to{opacity:1}}
       @keyframes bd-out{to{opacity:0}}
+      .concurrency{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border:1px solid var(--qline);border-radius:999px;color:var(--qmuted);font-size:9px;white-space:nowrap}
+      .concurrency[hidden]{display:none}
+      .concurrency::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.65}
+      .concurrency[data-active]::before{background:var(--qaccent);opacity:1}
+      .concurrency b{color:inherit;font:600 9px var(--qmono)}
       .actions{display:flex;align-items:center;gap:5px}.usage-link{border:0;background:transparent;color:inherit;font:inherit;font-size:10px;opacity:.65;cursor:pointer;padding:3px}.usage-link:hover{opacity:1;text-decoration:underline}
       dialog{color:var(--qink);background:var(--qbg);backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));-webkit-backdrop-filter:blur(40px) saturate(1.7) brightness(var(--qbright));border:1px solid var(--qline);border-radius:28px;box-shadow:0 30px 90px #0008;position:relative;isolation:isolate;padding:22px 24px;width:min(920px,calc(100vw - 40px));max-height:85vh;overflow:auto;user-select:text;font-size:12px}dialog[open]{display:flex;flex-direction:column;animation:dlg-in .3s cubic-bezier(.22,.85,.3,1)}dialog[open]::backdrop{animation:bd-in .3s ease-out}dialog.closing{animation:dlg-out .18s ease-in forwards;pointer-events:none}dialog.closing::backdrop{animation:bd-out .18s ease-in forwards}dialog::backdrop{background:rgba(8,12,20,.42);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2)}
       .dialog-head,.activity,.usage-filters,.usage-pages{flex:none}
@@ -142,7 +147,7 @@ function installQuotaWidget(snapshot, options = {}) {
       </filter>
     </defs></svg>
     <section class="card" aria-label="Zhengru 网关额度">
-      <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="gauge" width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true"><g class="arcs"><path class="gtrack" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="five_hour" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><path class="gtrack" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="seven_day" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/></g><g class="ring"><circle class="gtrack" cx="24" cy="24" r="19" stroke-width="5"/><circle class="gfill" data-gauge="seven_day" cx="24" cy="24" r="19" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round" transform="rotate(-90 24 24)"/></g><rect class="gem" x="17" y="17" width="14" height="14" transform="rotate(45 24 24)"/></svg><span class="title">网关额度</span></button><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
+      <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="gauge" width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true"><g class="arcs"><path class="gtrack" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="five_hour" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><path class="gtrack" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="seven_day" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/></g><g class="ring"><circle class="gtrack" cx="24" cy="24" r="19" stroke-width="5"/><circle class="gfill" data-gauge="seven_day" cx="24" cy="24" r="19" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round" transform="rotate(-90 24 24)"/></g><rect class="gem" x="17" y="17" width="14" height="14" transform="rotate(45 24 24)"/></svg><span class="title">网关额度</span></button><div class="actions"><span class="concurrency" hidden>并发 <b></b></span><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
       <div id="quota-details">
       <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
       <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
@@ -232,6 +237,12 @@ function installQuotaWidget(snapshot, options = {}) {
     card.classList.toggle('stale', stale);
     const g5 = current?.data?.five_hour, g7 = current?.data?.seven_day;
     card.classList.toggle('single-window', !!current?.data && !g5 && !!g7);
+    const badge = root.querySelector('.concurrency');
+    const concurrency = current?.data?.concurrency;
+    badge.hidden = !concurrency;
+    badge.toggleAttribute('data-active', (concurrency?.current_in_use ?? 0) > 0);
+    badge.querySelector('b').textContent = !concurrency ? '' : concurrency.max_capacity
+      ? `${concurrency.current_in_use} / ${concurrency.max_capacity}` : String(concurrency.current_in_use);
     const notes = [];
     if (g5) notes.push(`5h 剩 ${formatPercent(g5.remaining_percent)}`);
     if (g7) notes.push(`7d 剩 ${formatPercent(g7.remaining_percent)}`);
