@@ -18,7 +18,12 @@ export function sample() {
 
 test('quota parsing rejects malformed windows and drops unrelated fields', () => {
   const data = sample(); data.secret = 'do-not-transfer';
-  assert.equal(validateUsage(data).secret, undefined);
+  data.seven_day.window_stats = { requests: 4130, tokens: 329320517, cost: 387.55, standard_cost: 387.55, user_cost: 454.77, secret: 'drop' };
+  const parsed = validateUsage(data);
+  assert.equal(parsed.secret, undefined);
+  assert.equal(parsed.seven_day.window_stats.requests, 4130);
+  assert.equal(parsed.seven_day.window_stats.user_cost, 454.77);
+  assert.equal(parsed.seven_day.window_stats.secret, undefined);
   for (const value of [true, NaN, Infinity, -1, '30']) {
     const invalid = sample(); invalid.five_hour.used_percent = value;
     assert.throws(() => validateUsage(invalid), /无效/);
@@ -187,18 +192,22 @@ test('ranking fetch sends date and pagination to fixed gateway, validates and st
     assert.equal(new URL(url).searchParams.get('page'),'2');
     assert.equal(options.redirect,'error');
     return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,
-      direct_estimate:{status:'ok',calibration_mode:'auto',seven_day_cost_basis:200,total_quota_percent:10,direct_quota_percent:7,credits_delta:0,direct_cost:14,direct_tokens:7000000,sample_count:5,secret:'drop'},
+      direct_estimate:{status:'ok',calibration_mode:'auto',seven_day_cost_basis:200,step_cost:2,total_quota_percent:10,direct_quota_percent:7,credits_delta:0,direct_cost:14,direct_tokens:7000000,sample_count:5,coverage_start:'2026-11-01T10:00:00+08:00',coverage_end:'2026-11-06T12:00:00+08:00',is_partial_coverage:true,window_ref:{used_percent:60,sub2_cost:387.55,sub2_user_cost:454.77,sub2_tokens:329320517,sub2_requests:4130,min_full_cost:645.92,direct_cost:0},secret:'drop'},
       users:[
         {email:'test@example.com',cost:1.23456,secret:'drop'},
-        {user_id:0,email:'账号直登（估算）',requests:null,input_tokens:null,output_tokens:null,cache_tokens:null,total_tokens:7000000,cost:14,is_estimated:true,direct_usage:{quota_percent:7,total_quota_percent:10,credits_delta:0,sub2_cost:6,total_account_cost:20,seven_day_cost_basis:200,calibration_mode:'auto',sample_count:5,secret:'drop'}},
+        {user_id:0,email:'账号直登（估算）',requests:null,input_tokens:null,output_tokens:null,cache_tokens:null,total_tokens:7000000,cost:14,is_estimated:true,direct_usage:{status:'ok',quota_percent:7,total_quota_percent:10,credits_delta:0,sub2_cost:6,total_account_cost:20,seven_day_cost_basis:200,step_cost:2,calibration_mode:'auto',sample_count:5,coverage_start:'2026-11-01T10:00:00+08:00',coverage_end:'2026-11-06T12:00:00+08:00',is_partial_coverage:true,secret:'drop'}},
       ]});
   }});
   assert.equal(result.users[0].secret,undefined);assert.equal(result.users[0].cost,1.23456);
   assert.equal(result.users[0].is_estimated,undefined);
   assert.equal(result.users[1].is_estimated,true);
   assert.equal(result.users[1].direct_usage.quota_percent,7);
+  assert.equal(result.users[1].direct_usage.step_cost,2);
+  assert.equal(result.users[1].direct_usage.is_partial_coverage,true);
   assert.equal(result.users[1].direct_usage.secret,undefined);
   assert.equal(result.direct_estimate.status,'ok');
+  assert.equal(result.direct_estimate.step_cost,2);
+  assert.equal(result.direct_estimate.window_ref.sub2_user_cost,454.77);
   assert.equal(result.direct_estimate.secret,undefined);
   await assert.rejects(fetchUserBreakdown({...query,start_date:'2026-02-30'}),/参数无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({...query,users:[]})}),/数据无效/);

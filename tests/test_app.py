@@ -396,13 +396,13 @@ def test_direct_usage_auto_calibration_and_estimation(tmp_path):
 
     # Pure Sub2API blocks on Nov 26: 100% 7d quota = $200 ($2 per 1%, 500k tokens per $1).
     store.record_snapshot(ts=ts(9, 0, day=26), seven_day_used=10.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0)
+                          window_sub2_tokens=10_000_000, window_sub2_cost=20.0)
     store.record_snapshot(ts=ts(10, 0, day=26), seven_day_used=14.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=4_000_000, sub2_day_cost=8.0)
+                          window_sub2_tokens=14_000_000, window_sub2_cost=28.0)
     store.record_snapshot(ts=ts(11, 0, day=26), seven_day_used=18.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=8_000_000, sub2_day_cost=16.0)
+                          window_sub2_tokens=18_000_000, window_sub2_cost=36.0)
     store.record_snapshot(ts=ts(12, 0, day=26), seven_day_used=22.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=12_000_000, sub2_day_cost=24.0)
+                          window_sub2_tokens=22_000_000, window_sub2_cost=44.0)
 
     # Pure Sub2API day should yield 0 direct usage and auto-calibrated basis = $200,
     # while still keeping a visible 0-usage direct row so users see monitoring is active.
@@ -410,17 +410,17 @@ def test_direct_usage_auto_calibration_and_estimation(tmp_path):
     assert day1['status'] == 'zero'
     assert day1['calibration_mode'] == 'auto'
     assert day1['seven_day_cost_basis'] == pytest.approx(200.0, rel=1e-3)
+    assert day1['step_cost'] == pytest.approx(2.0, abs=0.01)
+    assert day1['is_partial_coverage'] is True
     assert day1['row']['email'] == '账号直登（估算）'
     assert day1['row']['total_tokens'] == 0
     assert day1['row']['cost'] == 0.0
 
     # Nov 27 mixed day: total +10% (= $20), Sub2API spent $6 (3M tokens) => direct = $14 (7M tokens, 7%).
     store.record_snapshot(ts=ts(9, 0, day=27), seven_day_used=22.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0,
-                          sub2_prev_day_tokens=12_000_000, sub2_prev_day_cost=24.0)
+                          window_sub2_tokens=22_000_000, window_sub2_cost=44.0)
     store.record_snapshot(ts=ts(12, 0, day=27), seven_day_used=32.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=3_000_000, sub2_day_cost=6.0,
-                          sub2_prev_day_tokens=12_000_000, sub2_prev_day_cost=24.0)
+                          window_sub2_tokens=25_000_000, window_sub2_cost=50.0)
 
     day2 = store.estimate_range(date(2026, 11, 27), date(2026, 11, 27))
     assert day2['status'] == 'ok'
@@ -435,11 +435,9 @@ def test_direct_usage_auto_calibration_and_estimation(tmp_path):
 
     # Nov 28 direct-only day: Sub2API = 0, total +5% (= $10) => falls back to global 500k tokens/$ -> 5M tokens.
     store.record_snapshot(ts=ts(9, 0, day=28), seven_day_used=32.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0,
-                          sub2_prev_day_tokens=3_000_000, sub2_prev_day_cost=6.0)
+                          window_sub2_tokens=25_000_000, window_sub2_cost=50.0)
     store.record_snapshot(ts=ts(11, 0, day=28), seven_day_used=37.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0,
-                          sub2_prev_day_tokens=3_000_000, sub2_prev_day_cost=6.0)
+                          window_sub2_tokens=25_000_000, window_sub2_cost=50.0)
     day3 = store.estimate_range(date(2026, 11, 28), date(2026, 11, 28))
     assert day3['status'] == 'ok'
     assert day3['direct_cost'] == pytest.approx(10.0, abs=0.01)
@@ -460,21 +458,19 @@ def test_direct_usage_manual_override_credits_midnight_and_reset(tmp_path):
     def ts(day, h, m=0):
         return datetime(2026, 11, day, h, m, tzinfo=tz).timestamp()
 
-    # Cross midnight: 23:55 -> 00:05 (+2% quota = $2, credits drop 100 -> 95 = $5; Sub2API spent $1 prev + $1 curr = $2).
+    # Cross midnight: 23:55 -> 00:05 (+2% quota = $2, credits drop 100 -> 95 = $5; Sub2API spent $2 / 400k tokens).
     store.record_snapshot(ts=ts(26, 23, 55), seven_day_used=50.0, seven_day_resets_at=resets1,
-                          credits_balance=100.0, sub2_day_tokens=2_000_000, sub2_day_cost=10.0)
+                          credits_balance=100.0, window_sub2_tokens=10_000_000, window_sub2_cost=50.0)
     store.record_snapshot(ts=ts(27, 0, 5), seven_day_used=52.0, seven_day_resets_at=resets1,
-                          credits_balance=95.0, sub2_day_tokens=200_000, sub2_day_cost=1.0,
-                          sub2_prev_day_tokens=2_200_000, sub2_prev_day_cost=11.0)
-    # Credit top-up (95 -> 150) should not be counted as consumption; window reset (52% -> 4%) uses new window 4%.
+                          credits_balance=95.0, window_sub2_tokens=10_400_000, window_sub2_cost=52.0)
+    # Credit top-up (95 -> 150) should not be counted as consumption; window reset (52% -> 4%) uses new window 4% / $1.
     store.record_snapshot(ts=ts(27, 1, 5), seven_day_used=4.0, seven_day_resets_at=resets2,
-                          credits_balance=150.0, sub2_day_tokens=400_000, sub2_day_cost=2.0,
-                          sub2_prev_day_tokens=2_200_000, sub2_prev_day_cost=11.0)
+                          credits_balance=150.0, window_sub2_tokens=200_000, window_sub2_cost=1.0)
 
     both = store.estimate_range(date(2026, 11, 26), date(2026, 11, 27))
     assert both['calibration_mode'] == 'manual'
     assert both['seven_day_cost_basis'] == 100.0
-    # Total account cost = (2% + 4%) * $1 + $5 credits = $11; Sub2API covered = $1 + $1 + $1 = $3 => direct = $8.
+    # Total account cost = (2% + 4%) * $1 + $5 credits = $11; Sub2API covered = $2 + $1 = $3 => direct = $8.
     assert both['credits_delta'] == pytest.approx(5.0, abs=1e-4)
     assert both['direct_cost'] == pytest.approx(8.0, abs=0.01)
     assert both['direct_tokens'] == 1_600_000
@@ -493,9 +489,9 @@ def test_direct_usage_pending_calibration_and_ranking_merge_pagination(tmp_path)
     t2 = datetime(2026, 11, 27, 11, 0, tzinfo=tz).timestamp()
     # +10% (= $20), Sub2API spent $10 (10M tokens -> 1M tokens/$) => direct = $10 (10M tokens).
     store.record_snapshot(ts=t1, seven_day_used=10.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0)
+                          window_sub2_tokens=20_000_000, window_sub2_cost=20.0)
     store.record_snapshot(ts=t2, seven_day_used=20.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=10_000_000, sub2_day_cost=10.0)
+                          window_sub2_tokens=30_000_000, window_sub2_cost=30.0)
 
     async def run():
         async def handler(request):
@@ -535,37 +531,35 @@ def test_fetch_records_snapshot_and_throttles(tmp_path):
     from direct_usage import DirectUsageStore
 
     store = DirectUsageStore(tmp_path / 'fetch.db', account_id=1, tz='Asia/Shanghai')
-    trend_calls = 0
+    calls = []
 
     async def run():
-        nonlocal trend_calls
         async def handler(request):
-            nonlocal trend_calls
+            calls.append(request.url.path)
             if request.url.path.endswith('/login'):
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test', 'expires_in': 86400}})
             if request.url.path.endswith('/quota/refresh'):
                 return httpx.Response(200, json={'code': 0, 'data': {
                     'rate_limit_reset_credits': {'available_count': 0, 'credits': []},
                     'credits': {'balance': '50.5'}}})
-            if request.url.path.endswith('/snapshot-v2'):
-                trend_calls += 1
-                end_date = request.url.params['end_date']
-                return httpx.Response(200, json={'code': 0, 'data': {'trend': [
-                    {'date': end_date, 'requests': 4, 'input_tokens': 100, 'output_tokens': 50,
-                     'cache_creation_tokens': 0, 'cache_read_tokens': 50, 'total_tokens': 200,
-                     'cost': 1.25, 'actual_cost': 1.25},
-                ]}})
-            return httpx.Response(200, json=payload())
+            data = payload()
+            data['data']['seven_day']['window_stats'] = {
+                'requests': 100, 'tokens': 5_000_000, 'cost': 12.5, 'standard_cost': 12.5, 'user_cost': 15.0,
+            }
+            return httpx.Response(200, json=data)
 
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
             service = UsageService(client, 'test', 'test', store=store, snapshot_min_interval=300)
-            await service.get()
-            assert trend_calls == 1
+            res = await service.get()
+            assert res['seven_day']['window_stats']['user_cost'] == 15.0
             assert store.last_snapshot_ts() is not None
+            # No extra /snapshot-v2 call needed when window_stats is present.
+            assert all(not p.endswith('/snapshot-v2') for p in calls)
+            first_ts = store.last_snapshot_ts()
             # Expire quota cache, but snapshot throttle still prevents duplicate snapshot within 300s.
             service.cache_deadline = 0
             await service.get()
-            assert trend_calls == 1
+            assert store.last_snapshot_ts() == first_ts
 
     asyncio.run(run())
 
@@ -583,7 +577,8 @@ def test_quota_proxy_mode_records_snapshots_and_merges_direct_usage(tmp_path):
     # Seed an earlier snapshot today so the live proxy fetch forms an interval with direct usage.
     earlier_ts = datetime(today.year, today.month, today.day, 0, 1, tzinfo=tz).timestamp()
     store.record_snapshot(ts=earlier_ts, seven_day_used=10.0, seven_day_resets_at=resets,
-                          sub2_day_tokens=0, sub2_day_cost=0.0)
+                          window_sub2_tokens=10_000_000, window_sub2_cost=20.0,
+                          window_sub2_user_cost=24.0, window_sub2_requests=100)
 
     async def run():
         async def handler(request):
@@ -591,7 +586,13 @@ def test_quota_proxy_mode_records_snapshots_and_merges_direct_usage(tmp_path):
                 return httpx.Response(200, json={
                     'updated_at': '2026-11-27T15:00:00+08:00',
                     'five_hour': None,
-                    'seven_day': {'used_percent': 20.0, 'remaining_percent': 80.0, 'resets_at': resets},
+                    'seven_day': {
+                        'used_percent': 20.0, 'remaining_percent': 80.0, 'resets_at': resets,
+                        'window_stats': {
+                            'requests': 105, 'tokens': 12_000_000,
+                            'cost': 24.0, 'standard_cost': 24.0, 'user_cost': 30.0,
+                        },
+                    },
                     'reset_credits': {'available_count': 0, 'credits': [], 'error': None},
                     'credits': {'has_credits': True, 'unlimited': False, 'balance': '100.0'},
                     'timezone': 'Asia/Shanghai',
@@ -615,7 +616,7 @@ def test_quota_proxy_mode_records_snapshots_and_merges_direct_usage(tmp_path):
                     'timezone': 'Asia/Shanghai', 'page': 1, 'page_size': 100, 'has_more': False,
                     'users': [
                         {'user_id': 1, 'email': 'a@example.com', 'requests': 5, 'input_tokens': 1_000_000,
-                         'output_tokens': 500_000, 'cache_tokens': 500_000, 'total_tokens': 2_000_000, 'cost': 4.0},
+                         'output_tokens': 500_000, 'cache_tokens': 500_000, 'total_tokens': 2_000_000, 'cost': 4.0, 'actual_cost': 6.0},
                         # Any upstream estimated row should be stripped before local merge.
                         {'user_id': 0, 'email': '账号直登（估算）', 'is_estimated': True, 'total_tokens': 1, 'cost': 0.1},
                     ],
@@ -636,10 +637,50 @@ def test_quota_proxy_mode_records_snapshots_and_merges_direct_usage(tmp_path):
             assert ranking['users'][0]['total_tokens'] == 8_000_000
             assert ranking['users'][0]['cost'] == pytest.approx(16.0, abs=0.01)
             assert ranking['direct_estimate']['status'] == 'ok'
+            assert ranking['direct_estimate']['is_partial_coverage'] is False
+            assert ranking['direct_estimate']['window_ref']['sub2_user_cost'] == pytest.approx(30.0, abs=1e-4)
             activity = await service.token_activity()
             assert activity['users'][0]['email'] == 'a@example.com'
 
     asyncio.run(run())
+
+
+def test_plateau_deduplication_compresses_idle_snapshots_without_losing_coverage(tmp_path):
+    import sqlite3
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    from direct_usage import DirectUsageStore
+
+    tz = ZoneInfo('Asia/Shanghai')
+    db = tmp_path / 'dedup.db'
+    store = DirectUsageStore(db, account_id=1, tz='Asia/Shanghai')
+    resets = '2026-12-02T22:08:00+08:00'
+
+    for minute in (0, 5, 10, 15, 20):
+        store.record_snapshot(
+            ts=datetime(2026, 11, 27, 17, minute, tzinfo=tz).timestamp(),
+            seven_day_used=60.0,
+            seven_day_resets_at=resets,
+            credits_balance=648.477755,
+            window_sub2_tokens=329_320_517,
+            window_sub2_cost=387.5521,
+            window_sub2_user_cost=454.7720,
+            window_sub2_requests=4130,
+        )
+
+    with sqlite3.connect(db) as conn:
+        row_count = conn.execute('SELECT COUNT(*) FROM quota_snapshots').fetchone()[0]
+    assert row_count == 2
+
+    est = store.estimate_range(date(2026, 11, 27), date(2026, 11, 27))
+    assert est['status'] == 'zero'
+    assert est['sample_count'] == 5
+    assert est['coverage_start'].startswith('2026-11-27T17:00:00')
+    assert est['coverage_end'].startswith('2026-11-27T17:20:00')
+    assert est['is_partial_coverage'] is True
+    assert est['step_cost'] == pytest.approx(est['seven_day_cost_basis'] / 100.0, abs=0.01)
+    assert est['window_ref']['sub2_user_cost'] == pytest.approx(454.7720, abs=1e-4)
+    assert est['window_ref']['sub2_requests'] == 4130
 
 
 def test_window_stats_snapshots_handle_resets_at_jitter_without_extra_trend_call(tmp_path):

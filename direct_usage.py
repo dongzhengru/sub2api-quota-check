@@ -12,6 +12,7 @@ MIN_CALIBRATION_BLOCK_PERCENT = 2.0
 FALLBACK_CALIBRATION_BLOCK_PERCENT = 0.5
 MIN_WINDOW_FLOOR_PERCENT = 5.0
 SATURATION_PERCENT = 99.5
+PARTIAL_COVERAGE_GRACE_SECONDS = 600
 RETENTION_DAYS = 400
 
 
@@ -65,13 +66,21 @@ def _is_window_reset(prev_used, curr_used, prev_resets_at, curr_resets_at,
     return False
 
 
-class DirectUsageStore:
-    """SQLite-backed snapshot store that estimates direct-login account usage.
+def _same_metric(a, b, tol=1e-6):
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(float(a) - float(b)) <= tol
 
-    Records periodic snapshots of the upstream account's 7-day utilization,
-    credit balance, and Sub2API's cumulative daily usage. By comparing total
-    account quota/credit consumption against Sub2API's logged usage over any
-    queried date range, it estimates the portion consumed via direct login.
+
+class DirectUsageStore:
+    """Minimal SQLite snapshot store for per-day direct-login usage estimation.
+
+    Sub2API provides instantaneous 7-day utilization, credit balance, and
+    cumulative window_stats (Sub2API-only traffic). Storing change-deduplicated
+    snapshots lets us slice consumption down to any single day or date range
+    without calling extra daily trend APIs.
     """
 
     def __init__(
@@ -114,23 +123,31 @@ class DirectUsageStore:
                     five_hour_used REAL,
                     five_hour_resets_at TEXT,
                     credits_balance REAL,
-                    sub2_day_tokens INTEGER NOT NULL,
-                    sub2_day_cost REAL NOT NULL,
+                    sub2_day_tokens INTEGER NOT NULL DEFAULT 0,
+                    sub2_day_cost REAL NOT NULL DEFAULT 0.0,
                     sub2_day_requests INTEGER NOT NULL DEFAULT 0,
                     sub2_prev_day_tokens INTEGER,
                     sub2_prev_day_cost REAL,
                     window_sub2_tokens INTEGER,
-                    window_sub2_cost REAL
+                    window_sub2_cost REAL,
+                    window_sub2_user_cost REAL,
+                    window_sub2_requests INTEGER,
+                    sample_hits INTEGER NOT NULL DEFAULT 1
                 )
                 '''
             )
             existing_cols = {
                 row['name'] for row in conn.execute('PRAGMA table_info(quota_snapshots)').fetchall()
             }
-            if 'window_sub2_tokens' not in existing_cols:
-                conn.execute('ALTER TABLE quota_snapshots ADD COLUMN window_sub2_tokens INTEGER')
-            if 'window_sub2_cost' not in existing_cols:
-                conn.execute('ALTER TABLE quota_snapshots ADD COLUMN window_sub2_cost REAL')
+            for col_name, col_def in (
+                ('window_sub2_tokens', 'INTEGER'),
+                ('window_sub2_cost', 'REAL'),
+                ('window_sub2_user_cost', 'REAL'),
+                ('window_sub2_requests', 'INTEGER'),
+                ('sample_hits', 'INTEGER NOT NULL DEFAULT 1'),
+            ):
+                if col_name not in existing_cols:
+                    conn.execute(f'ALTER TABLE quota_snapshots ADD COLUMN {col_name} {col_def}')
             conn.execute(
                 'CREATE INDEX IF NOT EXISTS idx_snapshots_account_ts '
                 'ON quota_snapshots (account_id, ts)'
@@ -148,10 +165,30 @@ class DirectUsageStore:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                'SELECT ts FROM quota_snapshots WHERE account_id = ? ORDER BY ts DESC LIMIT 1',
+                'SELECT ts FROM quota_snapshots WHERE account_id = ? ORDER BY ts DESC, id DESC LIMIT 1',
                 (self.account_id,),
             ).fetchone()
             return float(row['ts']) if row is not None else None
+
+    @staticmethod
+    def _rows_identical(prev, curr_values):
+        return (
+            prev['local_date'] == curr_values['local_date']
+            and _same_metric(prev['seven_day_used'], curr_values['seven_day_used'], tol=1e-4)
+            and _same_metric(prev['credits_balance'], curr_values['credits_balance'], tol=1e-6)
+            and prev['window_sub2_tokens'] == curr_values['window_sub2_tokens']
+            and _same_metric(prev['window_sub2_cost'], curr_values['window_sub2_cost'], tol=1e-6)
+            and _same_metric(prev['window_sub2_user_cost'], curr_values['window_sub2_user_cost'], tol=1e-6)
+            and prev['window_sub2_requests'] == curr_values['window_sub2_requests']
+            and not _is_window_reset(
+                prev['seven_day_used'],
+                curr_values['seven_day_used'],
+                prev['seven_day_resets_at'],
+                curr_values['seven_day_resets_at'],
+                prev['window_sub2_tokens'],
+                curr_values['window_sub2_tokens'],
+            )
+        )
 
     def record_snapshot(
         self,
@@ -159,62 +196,92 @@ class DirectUsageStore:
         ts,
         seven_day_used=None,
         seven_day_resets_at=None,
-        five_hour_used=None,
-        five_hour_resets_at=None,
         credits_balance=None,
-        sub2_day_tokens=0,
-        sub2_day_cost=0.0,
-        sub2_day_requests=0,
-        sub2_prev_day_tokens=None,
-        sub2_prev_day_cost=None,
         window_sub2_tokens=None,
         window_sub2_cost=None,
+        window_sub2_user_cost=None,
+        window_sub2_requests=None,
     ):
         ts_val = float(ts)
         local_date = datetime.fromtimestamp(ts_val, tz=timezone.utc).astimezone(self.zone).date().isoformat()
         s7 = _finite_nonneg(seven_day_used)
-        s5 = _finite_nonneg(five_hour_used)
         bal = _finite_nonneg(credits_balance)
-        day_tokens = max(0, int(sub2_day_tokens or 0))
-        day_cost = max(0.0, float(sub2_day_cost or 0.0))
-        day_req = max(0, int(sub2_day_requests or 0))
-        prev_tokens = max(0, int(sub2_prev_day_tokens)) if sub2_prev_day_tokens is not None else None
-        prev_cost = max(0.0, float(sub2_prev_day_cost)) if sub2_prev_day_cost is not None else None
         win_tokens_num = _finite_nonneg(window_sub2_tokens)
         win_tokens = int(round(win_tokens_num)) if win_tokens_num is not None else None
         win_cost = _finite_nonneg(window_sub2_cost)
+        win_user_cost = _finite_nonneg(window_sub2_user_cost)
+        win_req_num = _finite_nonneg(window_sub2_requests)
+        win_req = int(round(win_req_num)) if win_req_num is not None else None
+        resets_str = seven_day_resets_at if isinstance(seven_day_resets_at, str) else None
         cutoff_ts = ts_val - RETENTION_DAYS * 86400
+
+        curr_values = {
+            'local_date': local_date,
+            'seven_day_used': s7,
+            'seven_day_resets_at': resets_str,
+            'credits_balance': bal,
+            'window_sub2_tokens': win_tokens,
+            'window_sub2_cost': win_cost,
+            'window_sub2_user_cost': win_user_cost,
+            'window_sub2_requests': win_req,
+        }
+
         with self._connect() as conn:
-            conn.execute(
+            # Two-point plateau compression: when the last two snapshots on the same
+            # local_date already have identical metrics, extend the latest row's timestamp
+            # in place instead of inserting duplicate idle rows.
+            recent = conn.execute(
                 '''
-                INSERT INTO quota_snapshots (
-                    account_id, ts, local_date,
-                    seven_day_used, seven_day_resets_at,
-                    five_hour_used, five_hour_resets_at,
-                    credits_balance,
-                    sub2_day_tokens, sub2_day_cost, sub2_day_requests,
-                    sub2_prev_day_tokens, sub2_prev_day_cost,
-                    window_sub2_tokens, window_sub2_cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                SELECT id, ts, local_date, seven_day_used, seven_day_resets_at,
+                       credits_balance, window_sub2_tokens, window_sub2_cost,
+                       window_sub2_user_cost, window_sub2_requests, sample_hits
+                FROM quota_snapshots
+                WHERE account_id = ?
+                ORDER BY ts DESC, id DESC
+                LIMIT 2
                 ''',
-                (
-                    self.account_id,
-                    ts_val,
-                    local_date,
-                    s7,
-                    seven_day_resets_at if isinstance(seven_day_resets_at, str) else None,
-                    s5,
-                    five_hour_resets_at if isinstance(five_hour_resets_at, str) else None,
-                    bal,
-                    day_tokens,
-                    day_cost,
-                    day_req,
-                    prev_tokens,
-                    prev_cost,
-                    win_tokens,
-                    win_cost,
-                ),
-            )
+                (self.account_id,),
+            ).fetchall()
+            if (
+                len(recent) == 2
+                and ts_val >= float(recent[0]['ts'])
+                and self._rows_identical(recent[0], curr_values)
+                and self._rows_identical(recent[1], curr_values)
+            ):
+                conn.execute(
+                    '''
+                    UPDATE quota_snapshots
+                    SET ts = ?, seven_day_resets_at = ?, sample_hits = COALESCE(sample_hits, 1) + 1
+                    WHERE id = ?
+                    ''',
+                    (ts_val, resets_str, recent[0]['id']),
+                )
+            else:
+                conn.execute(
+                    '''
+                    INSERT INTO quota_snapshots (
+                        account_id, ts, local_date,
+                        seven_day_used, seven_day_resets_at,
+                        credits_balance,
+                        sub2_day_tokens, sub2_day_cost, sub2_day_requests,
+                        window_sub2_tokens, window_sub2_cost,
+                        window_sub2_user_cost, window_sub2_requests,
+                        sample_hits
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0, 0.0, 0, ?, ?, ?, ?, 1)
+                    ''',
+                    (
+                        self.account_id,
+                        ts_val,
+                        local_date,
+                        s7,
+                        resets_str,
+                        bal,
+                        win_tokens,
+                        win_cost,
+                        win_user_cost,
+                        win_req,
+                    ),
+                )
             conn.execute(
                 'DELETE FROM quota_snapshots WHERE account_id = ? AND ts < ?',
                 (self.account_id, cutoff_ts),
@@ -228,9 +295,9 @@ class DirectUsageStore:
             rows = conn.execute(
                 '''
                 SELECT ts, local_date, seven_day_used, seven_day_resets_at,
-                       credits_balance, sub2_day_tokens, sub2_day_cost,
-                       sub2_prev_day_tokens, sub2_prev_day_cost,
-                       window_sub2_tokens, window_sub2_cost
+                       credits_balance, window_sub2_tokens, window_sub2_cost,
+                       window_sub2_user_cost, window_sub2_requests,
+                       COALESCE(sample_hits, 1) AS sample_hits
                 FROM quota_snapshots
                 WHERE account_id = ?
                 ORDER BY ts ASC, id ASC
@@ -245,7 +312,7 @@ class DirectUsageStore:
         return dt.timestamp()
 
     def _compute_intervals(self, rows):
-        """Convert chronological snapshots into per-day attributed intervals."""
+        """Convert chronological window_stats snapshots into per-day attributed intervals."""
         intervals = []
         for idx in range(1, len(rows)):
             prev = rows[idx - 1]
@@ -257,6 +324,14 @@ class DirectUsageStore:
             curr_day = date.fromisoformat(curr['local_date'])
             day_diff = (curr_day - prev_day).days
             if day_diff < 0 or day_diff > 1:
+                continue
+
+            if (
+                prev.get('window_sub2_cost') is None
+                or curr.get('window_sub2_cost') is None
+                or prev.get('window_sub2_tokens') is None
+                or curr.get('window_sub2_tokens') is None
+            ):
                 continue
 
             reset = _is_window_reset(
@@ -283,79 +358,16 @@ class DirectUsageStore:
             saturated = (
                 curr['seven_day_used'] is not None and curr['seven_day_used'] >= SATURATION_PERCENT
             )
-            has_window_stats = (
-                prev.get('window_sub2_cost') is not None
-                and curr.get('window_sub2_cost') is not None
-                and prev.get('window_sub2_tokens') is not None
-                and curr.get('window_sub2_tokens') is not None
-            )
-
-            if has_window_stats:
-                if reset:
-                    win_delta_cost = max(0.0, curr['window_sub2_cost'])
-                    win_delta_tokens = max(0, curr['window_sub2_tokens'])
-                else:
-                    win_delta_cost = max(0.0, curr['window_sub2_cost'] - prev['window_sub2_cost'])
-                    win_delta_tokens = max(0, curr['window_sub2_tokens'] - prev['window_sub2_tokens'])
-                calibratable = not reset and not saturated and delta_credits == 0.0
-                if day_diff == 0:
-                    intervals.append(
-                        {
-                            'local_date': curr['local_date'],
-                            'start_ts': prev['ts'],
-                            'end_ts': curr['ts'],
-                            'delta_u': delta_u,
-                            'delta_credits': delta_credits,
-                            'delta_sub2_cost': win_delta_cost,
-                            'delta_sub2_tokens': win_delta_tokens,
-                            'reset': reset,
-                            'saturated': saturated,
-                            'calibratable': calibratable,
-                        }
-                    )
-                else:
-                    midnight = self._midnight_ts(curr['local_date'])
-                    frac_prev = max(0.0, min(1.0, (midnight - prev['ts']) / dt_sec))
-                    frac_curr = 1.0 - frac_prev
-                    prev_tokens = int(round(win_delta_tokens * frac_prev))
-                    curr_tokens = win_delta_tokens - prev_tokens
-                    if frac_prev > 0:
-                        intervals.append(
-                            {
-                                'local_date': prev['local_date'],
-                                'start_ts': prev['ts'],
-                                'end_ts': min(midnight, curr['ts']),
-                                'delta_u': delta_u * frac_prev,
-                                'delta_credits': delta_credits * frac_prev,
-                                'delta_sub2_cost': win_delta_cost * frac_prev,
-                                'delta_sub2_tokens': prev_tokens,
-                                'reset': reset,
-                                'saturated': saturated,
-                                'calibratable': calibratable,
-                                'cross_midnight_whole': (delta_u, win_delta_cost),
-                            }
-                        )
-                    if frac_curr > 0:
-                        intervals.append(
-                            {
-                                'local_date': curr['local_date'],
-                                'start_ts': max(midnight, prev['ts']),
-                                'end_ts': curr['ts'],
-                                'delta_u': delta_u * frac_curr,
-                                'delta_credits': delta_credits * frac_curr,
-                                'delta_sub2_cost': win_delta_cost * frac_curr,
-                                'delta_sub2_tokens': curr_tokens,
-                                'reset': reset,
-                                'saturated': saturated,
-                                'calibratable': calibratable,
-                                'cross_midnight_second': True,
-                            }
-                        )
-                continue
+            if reset:
+                win_delta_cost = max(0.0, curr['window_sub2_cost'])
+                win_delta_tokens = max(0, curr['window_sub2_tokens'])
+            else:
+                win_delta_cost = max(0.0, curr['window_sub2_cost'] - prev['window_sub2_cost'])
+                win_delta_tokens = max(0, curr['window_sub2_tokens'] - prev['window_sub2_tokens'])
+            calibratable = not reset and not saturated and delta_credits == 0.0
+            hits = max(1, int(curr.get('sample_hits') or 1))
 
             if day_diff == 0:
-                delta_sub2_cost = max(0.0, curr['sub2_day_cost'] - prev['sub2_day_cost'])
-                delta_sub2_tokens = max(0, curr['sub2_day_tokens'] - prev['sub2_day_tokens'])
                 intervals.append(
                     {
                         'local_date': curr['local_date'],
@@ -363,33 +375,21 @@ class DirectUsageStore:
                         'end_ts': curr['ts'],
                         'delta_u': delta_u,
                         'delta_credits': delta_credits,
-                        'delta_sub2_cost': delta_sub2_cost,
-                        'delta_sub2_tokens': delta_sub2_tokens,
+                        'delta_sub2_cost': win_delta_cost,
+                        'delta_sub2_tokens': win_delta_tokens,
                         'reset': reset,
                         'saturated': saturated,
-                        'calibratable': (not reset and not saturated and delta_credits == 0.0),
+                        'calibratable': calibratable,
+                        'sample_hits': hits,
                     }
                 )
             else:
-                # Split midnight-crossing interval proportionally for quota/credits,
-                # and use prev_day final totals for exact Sub2API day attribution.
                 midnight = self._midnight_ts(curr['local_date'])
                 frac_prev = max(0.0, min(1.0, (midnight - prev['ts']) / dt_sec))
                 frac_curr = 1.0 - frac_prev
-                prev_rem_cost = (
-                    max(0.0, curr['sub2_prev_day_cost'] - prev['sub2_day_cost'])
-                    if curr['sub2_prev_day_cost'] is not None
-                    else 0.0
-                )
-                prev_rem_tokens = (
-                    max(0, curr['sub2_prev_day_tokens'] - prev['sub2_day_tokens'])
-                    if curr['sub2_prev_day_tokens'] is not None
-                    else 0
-                )
-                curr_new_cost = max(0.0, curr['sub2_day_cost'])
-                curr_new_tokens = max(0, curr['sub2_day_tokens'])
-                calibratable = not reset and not saturated and delta_credits == 0.0
-                if frac_prev > 0 or prev_rem_cost > 0 or prev_rem_tokens > 0:
+                prev_tokens = int(round(win_delta_tokens * frac_prev))
+                curr_tokens = win_delta_tokens - prev_tokens
+                if frac_prev > 0:
                     intervals.append(
                         {
                             'local_date': prev['local_date'],
@@ -397,18 +397,16 @@ class DirectUsageStore:
                             'end_ts': min(midnight, curr['ts']),
                             'delta_u': delta_u * frac_prev,
                             'delta_credits': delta_credits * frac_prev,
-                            'delta_sub2_cost': prev_rem_cost,
-                            'delta_sub2_tokens': prev_rem_tokens,
+                            'delta_sub2_cost': win_delta_cost * frac_prev,
+                            'delta_sub2_tokens': prev_tokens,
                             'reset': reset,
                             'saturated': saturated,
                             'calibratable': calibratable,
-                            'cross_midnight_whole': (
-                                delta_u,
-                                prev_rem_cost + curr_new_cost,
-                            ),
+                            'sample_hits': 1,
+                            'cross_midnight_whole': (delta_u, win_delta_cost),
                         }
                     )
-                if frac_curr > 0 or curr_new_cost > 0 or curr_new_tokens > 0:
+                if frac_curr > 0:
                     intervals.append(
                         {
                             'local_date': curr['local_date'],
@@ -416,11 +414,12 @@ class DirectUsageStore:
                             'end_ts': curr['ts'],
                             'delta_u': delta_u * frac_curr,
                             'delta_credits': delta_credits * frac_curr,
-                            'delta_sub2_cost': curr_new_cost,
-                            'delta_sub2_tokens': curr_new_tokens,
+                            'delta_sub2_cost': win_delta_cost * frac_curr,
+                            'delta_sub2_tokens': curr_tokens,
                             'reset': reset,
                             'saturated': saturated,
                             'calibratable': calibratable,
+                            'sample_hits': hits,
                             'cross_midnight_second': True,
                         }
                     )
@@ -512,6 +511,19 @@ class DirectUsageStore:
 
         return None, 'pending'
 
+    def _compute_partial_coverage(self, start_str, end_str, cov_start_ts, cov_end_ts):
+        range_start_ts = self._midnight_ts(start_str)
+        next_day_str = (date.fromisoformat(end_str) + timedelta(days=1)).isoformat()
+        range_end_ts = self._midnight_ts(next_day_str)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        effective_end_ts = min(range_end_ts, now_ts)
+        missing_start = cov_start_ts - range_start_ts > PARTIAL_COVERAGE_GRACE_SECONDS
+        missing_end = (
+            range_end_ts < now_ts
+            and (effective_end_ts - cov_end_ts) > PARTIAL_COVERAGE_GRACE_SECONDS
+        )
+        return missing_start or missing_end
+
     def estimate_range(self, start_date, end_date):
         """Estimate direct-login usage over [start_date, end_date] inclusive."""
         start_str = start_date.isoformat() if isinstance(start_date, date) else str(start_date)
@@ -520,20 +532,36 @@ class DirectUsageStore:
         rows = self._load_snapshots()
         intervals = self._compute_intervals(rows)
         basis, mode = self._calibrate(intervals, rows)
+        step_cost = round(basis / 100.0, 2) if basis is not None else None
 
         latest = rows[-1] if rows else None
         window_ref = None
-        if (latest is not None and latest.get('seven_day_used') is not None
-                and latest.get('window_sub2_cost') is not None):
+        if (
+            latest is not None
+            and latest.get('seven_day_used') is not None
+            and latest.get('window_sub2_cost') is not None
+        ):
             w_used = float(latest['seven_day_used'])
             w_sub2_cost = float(latest['window_sub2_cost'])
+            w_sub2_user_cost = (
+                round(float(latest['window_sub2_user_cost']), 4)
+                if latest.get('window_sub2_user_cost') is not None
+                else None
+            )
             w_sub2_tokens = int(latest['window_sub2_tokens'] or 0)
+            w_sub2_requests = (
+                int(latest['window_sub2_requests'])
+                if latest.get('window_sub2_requests') is not None
+                else None
+            )
             w_min_basis = round(w_sub2_cost / (w_used / 100.0), 2) if w_used > 0 else None
             w_direct_cost = round(max(0.0, (w_used / 100.0) * basis - w_sub2_cost), 4) if basis is not None else None
             window_ref = {
                 'used_percent': round(w_used, 2),
                 'sub2_cost': round(w_sub2_cost, 4),
+                'sub2_user_cost': w_sub2_user_cost,
                 'sub2_tokens': w_sub2_tokens,
+                'sub2_requests': w_sub2_requests,
                 'min_full_cost': w_min_basis,
                 'direct_cost': w_direct_cost,
             }
@@ -542,6 +570,8 @@ class DirectUsageStore:
         if not in_range:
             in_range_snaps = [r for r in rows if start_str <= r['local_date'] <= end_str]
             if in_range_snaps:
+                snap_count = sum(max(1, int(r.get('sample_hits') or 1)) for r in in_range_snaps)
+                first_iso = datetime.fromtimestamp(in_range_snaps[0]['ts'], tz=timezone.utc).astimezone(self.zone).isoformat()
                 meta = {
                     'status': 'collecting',
                     'quota_percent': 0.0,
@@ -550,13 +580,18 @@ class DirectUsageStore:
                     'sub2_cost': 0.0,
                     'total_account_cost': None,
                     'seven_day_cost_basis': round(basis, 4) if basis is not None else None,
+                    'step_cost': step_cost,
                     'calibration_mode': mode,
-                    'sample_count': len(in_range_snaps),
+                    'sample_count': snap_count,
+                    'coverage_start': first_iso,
+                    'coverage_end': first_iso,
+                    'is_partial_coverage': True,
                 }
                 return {
                     'status': 'collecting',
                     'calibration_mode': mode,
                     'seven_day_cost_basis': round(basis, 4) if basis is not None else None,
+                    'step_cost': step_cost,
                     'total_quota_percent': 0.0,
                     'direct_quota_percent': 0.0,
                     'credits_delta': 0.0,
@@ -564,9 +599,10 @@ class DirectUsageStore:
                     'total_account_cost': None,
                     'direct_cost': None,
                     'direct_tokens': None,
-                    'sample_count': len(in_range_snaps),
-                    'coverage_start': None,
-                    'coverage_end': None,
+                    'sample_count': snap_count,
+                    'coverage_start': first_iso,
+                    'coverage_end': first_iso,
+                    'is_partial_coverage': True,
                     'window_ref': window_ref,
                     'row': {
                         'user_id': DIRECT_USER_ID,
@@ -586,6 +622,7 @@ class DirectUsageStore:
                 'status': 'no_data',
                 'calibration_mode': mode,
                 'seven_day_cost_basis': round(basis, 4) if basis is not None else None,
+                'step_cost': step_cost,
                 'total_quota_percent': 0.0,
                 'direct_quota_percent': 0.0,
                 'credits_delta': 0.0,
@@ -596,6 +633,7 @@ class DirectUsageStore:
                 'sample_count': 0,
                 'coverage_start': None,
                 'coverage_end': None,
+                'is_partial_coverage': False,
                 'window_ref': window_ref,
                 'row': None,
             }
@@ -604,9 +642,12 @@ class DirectUsageStore:
         delta_credits = sum(iv['delta_credits'] for iv in in_range)
         sub2_cost = sum(iv['delta_sub2_cost'] for iv in in_range)
         sub2_tokens = sum(iv['delta_sub2_tokens'] for iv in in_range)
-        sample_count = len(in_range) + 1
-        cov_start = datetime.fromtimestamp(in_range[0]['start_ts'], tz=timezone.utc).astimezone(self.zone).isoformat()
-        cov_end = datetime.fromtimestamp(in_range[-1]['end_ts'], tz=timezone.utc).astimezone(self.zone).isoformat()
+        sample_count = sum(max(1, int(iv.get('sample_hits') or 1)) for iv in in_range) + 1
+        cov_start_ts = in_range[0]['start_ts']
+        cov_end_ts = in_range[-1]['end_ts']
+        cov_start = datetime.fromtimestamp(cov_start_ts, tz=timezone.utc).astimezone(self.zone).isoformat()
+        cov_end = datetime.fromtimestamp(cov_end_ts, tz=timezone.utc).astimezone(self.zone).isoformat()
+        is_partial = self._compute_partial_coverage(start_str, end_str, cov_start_ts, cov_end_ts)
 
         # Global tokens-per-dollar fallback for days where only direct login was active.
         global_sub2_cost = sum(iv['delta_sub2_cost'] for iv in intervals)
@@ -680,8 +721,12 @@ class DirectUsageStore:
             'sub2_cost': round(sub2_cost, 6),
             'total_account_cost': round(total_account_cost, 6) if total_account_cost is not None else None,
             'seven_day_cost_basis': round(basis, 4) if basis is not None else None,
+            'step_cost': step_cost,
             'calibration_mode': mode,
             'sample_count': sample_count,
+            'coverage_start': cov_start,
+            'coverage_end': cov_end,
+            'is_partial_coverage': is_partial,
         }
 
         row = {
@@ -702,6 +747,7 @@ class DirectUsageStore:
             'status': status,
             'calibration_mode': mode,
             'seven_day_cost_basis': round(basis, 4) if basis is not None else None,
+            'step_cost': step_cost,
             'total_quota_percent': round(delta_u, 2),
             'direct_quota_percent': round(direct_quota_percent, 2),
             'credits_delta': round(delta_credits, 6),
@@ -712,6 +758,7 @@ class DirectUsageStore:
             'sample_count': sample_count,
             'coverage_start': cov_start,
             'coverage_end': cov_end,
+            'is_partial_coverage': is_partial,
             'window_ref': window_ref,
             'row': row,
         }

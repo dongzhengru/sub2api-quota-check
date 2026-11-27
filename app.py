@@ -433,51 +433,46 @@ class UsageService:
                         and now_ts - last_ts < self.snapshot_min_interval):
                     return False
                 w7 = usage_result.get('seven_day') or {}
-                w5 = usage_result.get('five_hour') or {}
                 credits = usage_result.get('credits') or {}
                 ws = w7.get('window_stats') if isinstance(w7.get('window_stats'), dict) else None
                 win_tokens = ws.get('tokens') if ws else None
                 win_cost = (ws.get('cost') if ws.get('cost') is not None else ws.get('standard_cost')) if ws else None
-                win_req = ws.get('requests', 0) if ws else 0
+                win_user_cost = ws.get('user_cost') if ws else None
+                win_req = ws.get('requests') if ws else None
                 has_window_stats = (
                     isinstance(win_tokens, (int, float)) and not isinstance(win_tokens, bool)
                     and math.isfinite(win_tokens) and win_tokens >= 0
                     and isinstance(win_cost, (int, float)) and not isinstance(win_cost, bool)
                     and math.isfinite(win_cost) and win_cost >= 0
                 )
-                today_row, prev_row = {}, {}
                 if not has_window_stats:
-                    today = datetime.fromtimestamp(now_ts, tz=timezone.utc).astimezone(ZoneInfo(self.tz)).date()
-                    yesterday = today - timedelta(days=1)
-                    if self.proxy_url:
-                        response = await self.client.get('api/token-activity')
-                        activity = self.unpack_proxy(response, stage='Token Activity 查询')
-                        trend = activity.get('trend') if isinstance(activity.get('trend'), list) else []
-                    else:
-                        trend = await self.fetch_activity_trend(yesterday, today, user_id=None)
-                    by_date = {row['date']: row for row in trend if isinstance(row, dict) and isinstance(row.get('date'), str)}
-                    today_row = by_date.get(today.isoformat()) or {}
-                    prev_row = by_date.get(yesterday.isoformat()) or {}
+                    return False
                 await asyncio.to_thread(
                     self.store.record_snapshot,
                     ts=now_ts,
                     seven_day_used=w7.get('used_percent'),
                     seven_day_resets_at=w7.get('resets_at'),
-                    five_hour_used=w5.get('used_percent'),
-                    five_hour_resets_at=w5.get('resets_at'),
                     credits_balance=credits.get('balance'),
-                    sub2_day_tokens=today_row.get('total_tokens', 0),
-                    sub2_day_cost=today_row.get('cost', 0.0),
-                    sub2_day_requests=today_row.get('requests', win_req if has_window_stats else 0),
-                    sub2_prev_day_tokens=prev_row.get('total_tokens') if not has_window_stats else None,
-                    sub2_prev_day_cost=prev_row.get('cost') if not has_window_stats else None,
-                    window_sub2_tokens=win_tokens if has_window_stats else None,
-                    window_sub2_cost=win_cost if has_window_stats else None,
+                    window_sub2_tokens=win_tokens,
+                    window_sub2_cost=win_cost,
+                    window_sub2_user_cost=win_user_cost,
+                    window_sub2_requests=win_req,
                 )
                 return True
             except Exception:
                 logger.warning('记录额度快照失败，不影响额度查询。', exc_info=True)
                 return False
+
+    @staticmethod
+    def parse_window_stats(raw):
+        if not isinstance(raw, dict):
+            return None
+        cleaned = {}
+        for key in ('requests', 'tokens', 'cost', 'standard_cost', 'user_cost'):
+            val = raw.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0:
+                cleaned[key] = val
+        return cleaned or None
 
     @staticmethod
     def parse_window(window):
@@ -497,7 +492,7 @@ class UsageService:
             'used_percent': used,
             'remaining_percent': max(0, 100 - used),
             'resets_at': reset,
-            'window_stats': window.get('window_stats'),
+            'window_stats': UsageService.parse_window_stats(window.get('window_stats')),
         }
 
     async def fetch_openai_quota(self):

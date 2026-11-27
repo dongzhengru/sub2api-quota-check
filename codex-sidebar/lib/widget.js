@@ -5,7 +5,7 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  const version = 35;
+  const version = 36;
   if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
@@ -110,6 +110,9 @@ function installQuotaWidget(snapshot, options = {}) {
       .track{margin-top:3px;height:5px;border-radius:99px;overflow:hidden;background:var(--qtrack);box-shadow:var(--qinset)}
       .fill{height:100%;border-radius:99px;background:var(--qaccent);box-shadow:0 0 10px var(--qglow);transition:width .5s var(--qbounce),background .3s ease}
       .reset{display:flex;justify-content:space-between;gap:4px;font-family:var(--qmono);font-size:9px;opacity:.55;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+      .wstats{display:flex;flex-wrap:wrap;gap:3px 6px;margin-top:4px;font-family:var(--qmono);font-size:9px;color:var(--qmuted);font-variant-numeric:tabular-nums;line-height:1.35}
+      .wstats[hidden]{display:none}
+      .wstats span{white-space:nowrap}
       .summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid var(--qline)}.summary-item{min-width:0}.summary-label{font-family:var(--qmono);font-size:9px;letter-spacing:.1em;opacity:.7}.summary-value{font-family:var(--qmono);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}.summary-detail{font-family:var(--qmono);font-size:9px;line-height:1.25;opacity:.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-detail.expiry{color:inherit;opacity:.9}.summary-detail[title]{cursor:help}
       .credits{margin-top:6px;font-family:var(--qmono);font-size:9px;border-top:1px solid var(--qline);padding-top:5px}.credits[hidden]{display:none}.credits summary{cursor:pointer;overflow-wrap:anywhere}.credits-list{margin-top:5px;display:grid;gap:6px}.credit-expiry{display:block;opacity:.65}.credit-warning{color:#df8842;opacity:1}
       .foot{margin-top:5px;font-family:var(--qmono);font-size:10px;color:#df8842}.foot[hidden]{display:none}.stale .fill{opacity:.45}
@@ -144,8 +147,8 @@ function installQuotaWidget(snapshot, options = {}) {
     <section class="card" aria-label="Zhengru 网关额度">
       <div class="head"><button class="toggle" type="button" aria-expanded="true" aria-controls="quota-details" aria-label="收起额度详情"><svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="gauge" width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true"><g class="arcs"><path class="gtrack" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="five_hour" d="M6.78 15.97A19 19 0 0 1 41.22 15.97" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/><path class="gtrack" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" stroke-width="5" stroke-linecap="round"/><path class="gfill" data-gauge="seven_day" d="M5.07 25.66A19 19 0 0 0 42.93 25.66" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round"/></g><g class="ring"><circle class="gtrack" cx="24" cy="24" r="19" stroke-width="5"/><circle class="gfill" data-gauge="seven_day" cx="24" cy="24" r="19" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" stroke-width="5" stroke-linecap="round" transform="rotate(-90 24 24)"/></g><rect class="gem" x="17" y="17" width="14" height="14" transform="rotate(45 24 24)"/></svg><span class="title">网关额度</span></button><div class="actions"><button class="usage-link" type="button">查看用量</button><button class="refresh" type="button" title="刷新额度" aria-label="刷新额度" aria-busy="false"><svg width="14" height="14" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M36.7279 36.7279C33.4706 39.9853 28.9706 42 24 42C14.0589 42 6 33.9411 6 24C6 14.0589 14.0589 6 24 6C28.9706 6 33.4706 8.01472 36.7279 11.2721C38.3859 12.9301 42 17 42 17" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 8V17H33" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div>
       <div id="quota-details">
-      <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
-      <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div></div>
+      <div class="row" data-window="five_hour"><div class="label"><span class="name">5 小时</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="5 小时剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div><div class="wstats" hidden></div></div>
+      <div class="row" data-window="seven_day"><div class="label"><span class="name">7 天</span><span class="number"><b>—</b><small>剩余</small></span></div><div class="track" role="progressbar" aria-label="7 天剩余额度" aria-valuemin="0" aria-valuemax="100"><div class="fill" style="width:0%"></div></div><div class="reset"><time>等待查询</time><span class="countdown"></span></div><div class="wstats" hidden></div></div>
       <div class="summary"><div class="summary-item"><div class="summary-label">重置卡</div><div class="summary-value" id="reset-card-count"></div><div class="summary-detail expiry" id="reset-card-expiry">等待查询</div></div><div class="summary-item"><div class="summary-label">点数余额</div><div class="summary-value" id="credit-balance">—</div><div class="summary-detail">Credits</div></div></div>
       <div class="foot" id="foot" role="status" hidden></div>
       </div>
@@ -248,6 +251,7 @@ function installQuotaWidget(snapshot, options = {}) {
       row.hidden = !!current?.data && !w;
       const track = row.querySelector('.track');
       const time = row.querySelector('time');
+      const wstatsBox = row.querySelector('.wstats');
       if (!w) {
         row.querySelector('b').textContent = '—';
         row.title = '';
@@ -256,6 +260,8 @@ function installQuotaWidget(snapshot, options = {}) {
         track.removeAttribute('aria-valuenow');
         track.removeAttribute('aria-valuetext');
         row.querySelector('.fill').style.width = '0%';
+        wstatsBox.replaceChildren();
+        wstatsBox.hidden = true;
         for (const gauge of root.querySelectorAll('[data-gauge="' + key + '"]')) gauge.style.strokeDashoffset = '100';
         continue;
       }
@@ -273,7 +279,26 @@ function installQuotaWidget(snapshot, options = {}) {
       time.dateTime = w.resets_at;
       time.title = '北京时间';
       row.querySelector('.countdown').textContent = countdown(w.resets_at);
-      row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置`;
+      const ws = w.window_stats && typeof w.window_stats === 'object' ? w.window_stats : null;
+      const wsChips = [];
+      if (ws) {
+        if (Number.isFinite(ws.requests)) wsChips.push(ws.requests >= 1000 ? `${(ws.requests / 1e3).toLocaleString('en-US', { maximumFractionDigits: 1 })}K req` : `${ws.requests} req`);
+        if (Number.isFinite(ws.tokens)) wsChips.push(Math.abs(ws.tokens) >= 999995 ? `${(ws.tokens / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })}M` : Math.abs(ws.tokens) >= 1000 ? `${(ws.tokens / 1e3).toLocaleString('en-US', { maximumFractionDigits: 1 })}K` : String(ws.tokens));
+        const acctCost = Number.isFinite(ws.cost) ? ws.cost : Number.isFinite(ws.standard_cost) ? ws.standard_cost : null;
+        if (acctCost !== null) wsChips.push(`A $${acctCost.toFixed(2)}`);
+        if (Number.isFinite(ws.user_cost)) wsChips.push(`U $${ws.user_cost.toFixed(2)}`);
+        if (acctCost !== null && acctCost > 0 && Number.isFinite(w.used_percent) && w.used_percent > 0) {
+          wsChips.push(`预计 $${(acctCost / (w.used_percent / 100)).toFixed(2)}`);
+        }
+      }
+      wstatsBox.replaceChildren();
+      for (const label of wsChips) {
+        const span = document.createElement('span');
+        span.textContent = label;
+        wstatsBox.append(span);
+      }
+      wstatsBox.hidden = !wsChips.length;
+      row.title = `已用 ${formatPercent(w.used_percent)} · 北京时间 ${formatDate(w.resets_at)} 重置` + (wsChips.length ? ` · ${wsChips.join(' / ')}` : '');
     }
     const info = current?.data?.reset_credits || {}, dates = (info.credits || []).map(c => c.expires_at).filter(Boolean).sort((a,b) => Date.parse(a)-Date.parse(b));
     const count = root.getElementById('reset-card-count'), expiry = root.getElementById('reset-card-expiry'), balance = current?.data?.credits?.balance == null ? NaN : Number(current.data.credits.balance);
@@ -339,19 +364,41 @@ function installQuotaWidget(snapshot, options = {}) {
   const usageError = root.querySelector('.rank-error');
   const directNote = root.querySelector('.direct-note');
   const startInput = root.querySelector('.usage-start'), endInput = root.querySelector('.usage-end');
+  function formatCoverage(startIso, endIso, isPartial) {
+    if (!startIso || !endIso) return '';
+    const parts = iso => {
+      const d = new Date(iso);
+      if (!Number.isFinite(d.getTime())) return null;
+      return Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).map(x => [x.type, x.value]));
+    };
+    const s = parts(startIso), e = parts(endIso);
+    if (!s || !e) return '';
+    const sameDay = s.month === e.month && s.day === e.day;
+    const span = sameDay ? `${s.hour}:${s.minute}–${e.hour}:${e.minute}` : `${s.month}/${s.day} ${s.hour}:${s.minute}–${e.month}/${e.day} ${e.hour}:${e.minute}`;
+    return (isPartial ? '仅覆盖 ' : '覆盖 ') + span;
+  }
   function formatDirectBasis(est) {
     if (!est) return '';
     if (Number.isFinite(est.seven_day_cost_basis)) {
       const mode = est.calibration_mode === 'manual' ? '手动基准' : '自动校准';
-      return `100% 7天额度 ≈ $${est.seven_day_cost_basis.toFixed(2)}（${mode}）`;
+      const step = Number.isFinite(est.step_cost) ? ` · 1% ≈ $${est.step_cost.toFixed(2)}` : '';
+      return `100% 7天额度 ≈ $${est.seven_day_cost_basis.toFixed(2)}（${mode}）${step}`;
     }
     return '待校准换算基准';
   }
   function formatDirectSub(du) {
     if (!du) return '差值反推估算';
-    if (du.status === 'collecting') return `已采 ${du.sample_count || 1} 次快照 · 等待下次采样对比`;
-    if (du.status === 'zero') return `已采 ${du.sample_count || 0} 次快照 · 当前无明显直登消耗`;
-    const parts = ['反推估算'];
+    const cov = formatCoverage(du.coverage_start, du.coverage_end, du.is_partial_coverage);
+    if (du.status === 'collecting') return `${cov ? cov + ' · ' : ''}已采 ${du.sample_count || 1} 次 · 等待下次对比`;
+    if (du.status === 'zero') {
+      const bits = [];
+      if (cov) bits.push(cov);
+      bits.push('暂无明显直登');
+      if (Number.isFinite(du.step_cost)) bits.push(`精度 ±$${du.step_cost.toFixed(2)}`);
+      return bits.join(' · ');
+    }
+    const parts = ['按账号成本(A)反推'];
+    if (cov) parts.push(cov);
     if (Number.isFinite(du.quota_percent) && du.quota_percent > 0) parts.push(`7天额度 ~${Number(du.quota_percent.toFixed(1))}%`);
     if (Number.isFinite(du.credits_delta) && du.credits_delta > 0) parts.push(`点数 -${du.credits_delta.toFixed(2)}`);
     if (du.calibration_mode === 'pending' && parts.length <= 2) parts.push('待校准换算基准');
@@ -360,22 +407,23 @@ function installQuotaWidget(snapshot, options = {}) {
   function formatDirectNote(est) {
     if (!est || !est.status) return '';
     const basis = formatDirectBasis(est);
+    const cov = formatCoverage(est.coverage_start, est.coverage_end, est.is_partial_coverage);
     const ref = est.window_ref;
     const refText = ref && Number.isFinite(ref.used_percent) && Number.isFinite(ref.sub2_cost)
-      ? ` · 当前 7天周期累计：已用 ${Number(ref.used_percent.toFixed(1))}%，其中 Sub2API $${ref.sub2_cost.toFixed(2)}` + (Number.isFinite(ref.direct_cost) ? `（周期直登约 $${ref.direct_cost.toFixed(2)}）` : Number.isFinite(ref.min_full_cost) ? `（满额下限 ≥ $${ref.min_full_cost.toFixed(0)}）` : '')
+      ? ` · 7天周期累计：已用 ${Number(ref.used_percent.toFixed(1))}%，Sub2API A $${ref.sub2_cost.toFixed(2)}` + (Number.isFinite(ref.sub2_user_cost) ? ` / U $${ref.sub2_user_cost.toFixed(2)}` : '') + (Number.isFinite(ref.min_full_cost) ? `（预计满额 $${ref.min_full_cost.toFixed(2)}）` : '')
       : '';
     if (est.status === 'ok') {
-      const bits = ['账号直登为差值反推估算（总消耗 − Sub2API 消耗）'];
+      const bits = ['账号直登按账号标准成本(A)差值反推'];
+      if (cov) bits.push(cov);
       if (Number.isFinite(est.total_quota_percent) && est.total_quota_percent > 0) bits.push(`区间总额度 +${Number(est.total_quota_percent.toFixed(1))}%（直登约 ${Number((est.direct_quota_percent || 0).toFixed(1))}%）`);
       if (Number.isFinite(est.credits_delta) && est.credits_delta > 0) bits.push(`点数消耗 ${est.credits_delta.toFixed(2)}`);
       bits.push(`基准：${basis}`);
-      if (Number.isFinite(est.sample_count) && est.sample_count > 0) bits.push(`快照 ${est.sample_count} 次`);
       return bits.join(' · ') + refText;
     }
-    if (est.status === 'collecting') return `直登监测已启动（已采 ${est.sample_count || 1} 次快照），等待下一轮快照对比 · 基准：${basis}${refText}`;
-    if (est.status === 'zero') return `已采快照 ${est.sample_count || 0} 次（总额度 +${Number((est.total_quota_percent || 0).toFixed(1))}%），该时段暂无明显账号直登消耗 · 基准：${basis}${refText}`;
-    if (est.status === 'pending_calibration') return `已采快照 ${est.sample_count || 0} 次（总额度 +${Number((est.total_quota_percent || 0).toFixed(1))}%），待自动校准或配置基准后反推费用与 Token${refText}`;
-    if (est.status === 'no_data') return `该日期范围暂无额度快照，账号直登估算自启用快照后开始累计${refText}`;
+    if (est.status === 'collecting') return `直登监测已启动（${cov ? cov + '，' : ''}已采 ${est.sample_count || 1} 次），等待下次快照对比 · 基准：${basis}${refText}`;
+    if (est.status === 'zero') return `${cov ? cov + ' · ' : ''}区间总额度 +${Number((est.total_quota_percent || 0).toFixed(1))}%，暂无明显直登消耗（OpenAI 1% 步进误差${Number.isFinite(est.step_cost) ? '约 ±$' + est.step_cost.toFixed(2) : ''}）· 基准：${basis}${refText}`;
+    if (est.status === 'pending_calibration') return `${cov ? cov + ' · ' : ''}区间总额度 +${Number((est.total_quota_percent || 0).toFixed(1))}%，待自动校准或配置基准后反推费用与 Token${refText}`;
+    if (est.status === 'no_data') return `该日期范围暂无额度快照，账号直登按天统计自启用快照后开始累计${refText}`;
     return '';
   }
   function quickRange(days) {

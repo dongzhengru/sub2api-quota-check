@@ -45,8 +45,20 @@ export function validateResetCredits(info) {
   return { available_count: info.available_count, credits, error: null };
 }
 
+function sanitizeWindowStats(ws) {
+  if (!ws || typeof ws !== 'object' || Array.isArray(ws)) return null;
+  const num = k => (typeof ws[k] === 'number' && Number.isFinite(ws[k]) && ws[k] >= 0 ? ws[k] : null);
+  const requests = num('requests'), tokens = num('tokens');
+  const cost = num('cost'), standard_cost = num('standard_cost'), user_cost = num('user_cost');
+  if (requests === null && tokens === null && cost === null && standard_cost === null && user_cost === null) return null;
+  return { requests, tokens, cost, standard_cost, user_cost };
+}
+
 function pickWindow(w) {
-  return { used_percent: w.used_percent, remaining_percent: w.remaining_percent, resets_at: w.resets_at };
+  const out = { used_percent: w.used_percent, remaining_percent: w.remaining_percent, resets_at: w.resets_at };
+  const ws = sanitizeWindowStats(w.window_stats);
+  if (ws) out.window_stats = ws;
+  return out;
 }
 
 export async function fetchUsage({ fetcher = fetch } = {}) {
@@ -98,6 +110,10 @@ export class UsagePoller {
 const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
 const TREND_FIELDS = ['requests','input_tokens','output_tokens','cache_creation_tokens','cache_read_tokens','total_tokens','cost','actual_cost'];
 
+function sanitizeIso(value) {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 function sanitizeDirectUsage(info) {
   if (!info || typeof info !== 'object' || Array.isArray(info)) return null;
   const num = k => (Number.isFinite(info[k]) ? info[k] : null);
@@ -111,8 +127,12 @@ function sanitizeDirectUsage(info) {
     sub2_cost: num('sub2_cost'),
     total_account_cost: num('total_account_cost'),
     seven_day_cost_basis: num('seven_day_cost_basis'),
+    step_cost: num('step_cost'),
     calibration_mode: mode,
     sample_count: num('sample_count'),
+    coverage_start: sanitizeIso(info.coverage_start),
+    coverage_end: sanitizeIso(info.coverage_end),
+    is_partial_coverage: info.is_partial_coverage === true,
   };
 }
 
@@ -125,7 +145,9 @@ function sanitizeDirectEstimate(info) {
   const ref = info.window_ref && typeof info.window_ref === 'object' && !Array.isArray(info.window_ref) ? {
     used_percent: Number.isFinite(info.window_ref.used_percent) ? info.window_ref.used_percent : null,
     sub2_cost: Number.isFinite(info.window_ref.sub2_cost) ? info.window_ref.sub2_cost : null,
+    sub2_user_cost: Number.isFinite(info.window_ref.sub2_user_cost) ? info.window_ref.sub2_user_cost : null,
     sub2_tokens: Number.isFinite(info.window_ref.sub2_tokens) ? info.window_ref.sub2_tokens : null,
+    sub2_requests: Number.isFinite(info.window_ref.sub2_requests) ? info.window_ref.sub2_requests : null,
     min_full_cost: Number.isFinite(info.window_ref.min_full_cost) ? info.window_ref.min_full_cost : null,
     direct_cost: Number.isFinite(info.window_ref.direct_cost) ? info.window_ref.direct_cost : null,
   } : null;
@@ -133,12 +155,16 @@ function sanitizeDirectEstimate(info) {
     status,
     calibration_mode: mode,
     seven_day_cost_basis: num('seven_day_cost_basis'),
+    step_cost: num('step_cost'),
     total_quota_percent: num('total_quota_percent'),
     direct_quota_percent: num('direct_quota_percent'),
     credits_delta: num('credits_delta'),
     direct_cost: num('direct_cost'),
     direct_tokens: num('direct_tokens'),
     sample_count: num('sample_count'),
+    coverage_start: sanitizeIso(info.coverage_start),
+    coverage_end: sanitizeIso(info.coverage_end),
+    is_partial_coverage: info.is_partial_coverage === true,
     window_ref: ref,
   };
 }
