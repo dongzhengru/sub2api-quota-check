@@ -5,13 +5,14 @@ function installQuotaWidget(snapshot, options = {}) {
   const BINDING = '__zhengruQuotaDispatch';
   // Immediate channel to the daemon; the polling request state stays as fallback.
   const dispatch = message => { try { if (typeof window[BINDING] === 'function') window[BINDING](JSON.stringify(message)); } catch {} };
-  const version = 41;
+  const version = 42;
   if (window[KEY]?.version !== version) window[KEY]?.dispose();
   if (window[KEY]) {
     window[KEY].update(snapshot, options);
     return window[KEY].status();
   }
   let current = snapshot;
+  let concurrency = options.concurrency;
   let disposed = false;
   let scheduled = false;
   let sidebar = null;
@@ -238,7 +239,6 @@ function installQuotaWidget(snapshot, options = {}) {
     const g5 = current?.data?.five_hour, g7 = current?.data?.seven_day;
     card.classList.toggle('single-window', !!current?.data && !g5 && !!g7);
     const badge = root.querySelector('.concurrency');
-    const concurrency = current?.data?.concurrency;
     badge.hidden = !concurrency;
     badge.toggleAttribute('data-active', (concurrency?.current_in_use ?? 0) > 0);
     badge.querySelector('b').textContent = !concurrency ? '' : concurrency.max_capacity
@@ -728,7 +728,10 @@ function installQuotaWidget(snapshot, options = {}) {
   window[KEY] = {
     version,
     update(value, opts) {
-      if (opts) setTheme(opts.theme);
+      if (opts) {
+        setTheme(opts.theme);
+        concurrency = opts.concurrency;
+      }
       // An immediate push and the periodic tick can race; never regress to older data.
       if (value?.receivedAt && current?.receivedAt && value.receivedAt < current.receivedAt) return status();
       current = value; lastContact = Date.now(); waitingForRefresh = false; mount(); paint(); return status();

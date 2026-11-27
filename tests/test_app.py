@@ -28,17 +28,11 @@ def test_cache_concurrency_and_expiration():
             if request.url.path.endswith('/quota/refresh'):
                 return httpx.Response(200, json={'code': 0, 'data': {'rate_limit_reset_credits': {'available_count': 0, 'credits': []}, 'credits': {'balance': '0'}}})
             assert request.url.params['timezone'] == 'Asia/Shanghai'
-            if request.url.path == '/api/v1/admin/ops/concurrency':
-                return httpx.Response(200, json={'code': 0, 'data': {'enabled': True, 'account': {
-                    '1': {'current_in_use': 0, 'max_capacity': 10, 'account_name': 'private'},
-                    '2': {'current_in_use': 9, 'max_capacity': 10},
-                }}})
             return httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
             service = UsageService(client, 'test', 'test')
             results = await asyncio.gather(*(service.get() for _ in range(20)))
-            assert len(calls) == 4
-            assert results[0]['concurrency'] == {'current_in_use': 0, 'max_capacity': 10}
+            assert len(calls) == 3
             assert sum(not r['cache']['hit'] for r in results) == 1
             assert results[0]['five_hour']['remaining_percent'] == 93
             assert results[0]['seven_day']['remaining_percent'] == 74
@@ -46,7 +40,7 @@ def test_cache_concurrency_and_expiration():
             assert (await service.get())['five_hour']['remaining_percent'] == 93
             service.cache_deadline = 0
             assert not (await service.get())['cache']['hit']
-            assert len(calls) == 7
+            assert len(calls) == 5
     asyncio.run(run())
 
 
@@ -59,13 +53,10 @@ def test_unauthorized_relogin_once():
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'test'}})
             if request.url.path.endswith('/quota/refresh'):
                 return httpx.Response(200, json={'code': 0, 'data': {'rate_limit_reset_credits': {'available_count': 0, 'credits': []}, 'credits': {'balance': '0'}}})
-            if request.url.path.endswith('/ops/concurrency'):
-                return httpx.Response(403)
             counts['usage'] += 1
             return httpx.Response(401) if counts['usage'] == 1 else httpx.Response(200, json=payload())
         async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
-            result = await UsageService(client, 'test', 'test').get()
-            assert result['concurrency'] is None
+            await UsageService(client, 'test', 'test').get()
             assert counts == {'login': 2, 'usage': 2}
     asyncio.run(run())
 
@@ -318,8 +309,6 @@ def test_reset_cards_sorted_whitelisted_cached_and_reauthenticated():
                 return httpx.Response(200, json={'code': 0, 'data': {'access_token': 'renewed'}})
             if request.url.path.endswith('/usage'):
                 return httpx.Response(200, json=payload())
-            if request.url.path.endswith('/ops/concurrency'):
-                return httpx.Response(404)
             assert request.url.path == '/api/v1/admin/openai/accounts/7/quota/refresh'
             if request.headers['authorization'] == 'Bearer old':
                 return httpx.Response(401)
@@ -337,12 +326,12 @@ def test_reset_cards_sorted_whitelisted_cached_and_reauthenticated():
             assert cards['available_count'] == 2 and cards['error'] is None
             assert [c['expires_at'] for c in cards['credits']] == ['2026-11-20T08:00:00+08:00', '2026-12-01T00:00:00Z', None]
             assert all(set(c) == {'label', 'resets_left', 'expires_at'} for c in cards['credits'])
-            assert all(method == 'POST' or path.endswith('/login') or path.endswith(('/usage', '/ops/concurrency')) for method, path in calls)
-            assert len(calls) == 5
+            assert all(method == 'POST' or path.endswith('/login') or path.endswith('/usage') for method, path in calls)
+            assert len(calls) == 4
             cards['credits'].clear()
             cached = await service.get()
             assert cached['cache']['hit'] and len(cached['reset_credits']['credits']) == 3
-            assert len(calls) == 5
+            assert len(calls) == 4
     asyncio.run(run())
 
 
@@ -853,5 +842,45 @@ def test_direct_row_stays_visible_on_page_one_without_dropping_users(tmp_path):
             assert [user['user_id'] for user in web_page['users']] == [1, 2, 3]
             assert web_page['has_more'] is True
             assert web_page['direct_estimate'] is None
+
+    asyncio.run(run())
+
+
+def test_concurrency_api_uses_selected_account_and_backs_off():
+    async def run():
+        status = 503
+        calls = 0
+
+        def handler(request):
+            nonlocal calls
+            calls += 1
+            assert request.url.path == '/api/v1/admin/ops/concurrency'
+            assert request.url.params['timezone'] == 'Asia/Shanghai'
+            assert request.headers['authorization'] == 'Bearer test'
+            return httpx.Response(status, json={'code': 0, 'data': {'enabled': True, 'account': {
+                '1': {'current_in_use': 9, 'max_capacity': 10},
+                '7': {'current_in_use': 0, 'max_capacity': 10, 'account_name': 'private'},
+            }}})
+
+        async with httpx.AsyncClient(base_url='https://test', transport=httpx.MockTransport(handler)) as client:
+            service = UsageService(client, 'test', 'test', account_id=7)
+            service.token, service.token_deadline = 'test', float('inf')
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as api:
+                with patch.dict(app.state._state, {'usage': service}):
+                    route = '/api/concurrency'
+                    assert (await api.get(route)).status_code == 503
+                    assert service.concurrency_retry == 10
+                    assert (await api.get(route)).status_code == 503
+                    assert calls == 1
+                    service.concurrency_deadline = 0
+                    assert (await api.get(route)).status_code == 503
+                    assert service.concurrency_retry == 20
+                    service.concurrency_deadline = 0
+                    status = 200
+                    response = await api.get(route)
+                    assert response.status_code == 200
+                    assert response.json() == {'current_in_use': 0, 'max_capacity': 10}
+                    assert service.concurrency_retry == 5
+                    assert calls == 3
 
     asyncio.run(run())

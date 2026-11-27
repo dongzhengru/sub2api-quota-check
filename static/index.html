@@ -197,6 +197,30 @@ function tick(){
   document.querySelector('#'+key+' .countdown').textContent=seconds?`Reset ${days?days+'d ':''}${hours}h ${minutes}m`:'已到重置时间，等待上游更新';
  }
 }
+function renderConcurrency(concurrency){
+ const badge=document.getElementById('concurrency');
+ badge.hidden=!Number.isSafeInteger(concurrency?.current_in_use)||concurrency.current_in_use<0;
+ badge.toggleAttribute('data-active',!badge.hidden&&concurrency.current_in_use>0);
+ badge.querySelector('b').textContent=badge.hidden?'':Number.isSafeInteger(concurrency.max_capacity)&&concurrency.max_capacity>0
+   ? concurrency.current_in_use+'/'+concurrency.max_capacity : String(concurrency.current_in_use);
+}
+let concurrencyDelay=5000;
+async function pollConcurrency(){
+ try{
+  const response=await fetch(apiPrefix+'/api/concurrency',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw Error('并发查询失败');
+  const data=await response.json();
+  if(!Number.isSafeInteger(data?.current_in_use)||data.current_in_use<0)throw Error('无效的并发数据');
+  renderConcurrency(data);
+  concurrencyDelay=5000;
+ }catch{
+  renderConcurrency(null);
+  concurrencyDelay=Math.min(concurrencyDelay*2,60000);
+ }finally{
+  setTimeout(pollConcurrency,concurrencyDelay);
+ }
+}
+
 async function load(){
  if(busy)return;busy=true;
  try{
@@ -218,11 +242,6 @@ async function load(){
   document.querySelector('.cards').classList.toggle('single',!data.five_hour||!data.seven_day);
   latest=data;
   renderCredits(data);
-  const badge=document.getElementById('concurrency'), concurrency=data.concurrency;
-  badge.hidden=!Number.isSafeInteger(concurrency?.current_in_use)||concurrency.current_in_use<0;
-  badge.toggleAttribute('data-active',!badge.hidden&&concurrency.current_in_use>0);
-  badge.querySelector('b').textContent=badge.hidden?'':Number.isSafeInteger(concurrency.max_capacity)&&concurrency.max_capacity>0
-   ? concurrency.current_in_use+'/'+concurrency.max_capacity : String(concurrency.current_in_use);
   const stamp=data.cache?.fetched_at||data.updated_at;
   const stampFmt=new Intl.DateTimeFormat('zh-CN',{timeZone:data.timezone,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
   document.getElementById('last-updated').textContent=stamp&&Number.isFinite(Date.parse(stamp))?stampFmt.format(new Date(stamp)):'—';
@@ -485,6 +504,6 @@ const themeToggle=document.getElementById('theme-toggle');
 function applyTheme(theme){document.documentElement.dataset.theme=theme;themeToggle.setAttribute('aria-pressed',String(theme==='light'));try{localStorage.setItem('quota-theme',theme);}catch{}}
 applyTheme((()=>{try{return localStorage.getItem('quota-theme')==='light'?'light':'dark';}catch{return 'dark';}})());
 themeToggle.addEventListener('click',()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light'));
-autoLoad();setInterval(autoLoad,60000);setInterval(tick,1000);
+autoLoad();pollConcurrency();setInterval(autoLoad,60000);setInterval(tick,1000);
 </script>
 </body></html>

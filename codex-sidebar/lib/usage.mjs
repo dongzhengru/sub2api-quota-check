@@ -20,14 +20,8 @@ export function validateUsage(data) {
     const creditsOnly = data.five_hour === null && data.seven_day === null && (hasBalance || data.credits?.unlimited === true);
     if (!creditsOnly) throw new Error('额度响应缺少有效额度窗口');
   }
-  const current = data.concurrency?.current_in_use;
-  const capacity = data.concurrency?.max_capacity;
   // Only transfer fields the widget actually needs into the renderer.
   return {
-    concurrency: Number.isSafeInteger(current) && current >= 0 ? {
-      current_in_use: current,
-      max_capacity: Number.isSafeInteger(capacity) && capacity > 0 ? capacity : null,
-    } : null,
     five_hour: windows.five_hour, seven_day: windows.seven_day,
     reset_credits: validateResetCredits(data.reset_credits),
     credits: { unlimited: data.credits?.unlimited === true,
@@ -74,6 +68,24 @@ export async function fetchUsage({ fetcher = fetch } = {}) {
   });
   if (!response.ok) throw new Error(`额度接口 HTTP ${response.status}`);
   return validateUsage(await response.json());
+}
+
+export async function fetchConcurrency({ fetcher = fetch, signal } = {}) {
+  const timeout = AbortSignal.timeout(5000);
+  const response = await fetcher(new URL('./concurrency', ENDPOINT).toString(), {
+    headers: { Accept: 'application/json' },
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    redirect: 'error',
+  });
+  if (!response.ok) throw new Error(`并发接口 HTTP ${response.status}`);
+  const data = await response.json();
+  const current = data?.current_in_use;
+  const capacity = data?.max_capacity;
+  if (!Number.isSafeInteger(current) || current < 0) throw new Error('无效的并发数据');
+  return {
+    current_in_use: current,
+    max_capacity: Number.isSafeInteger(capacity) && capacity > 0 ? capacity : null,
+  };
 }
 
 // 北京时间 02:00–08:30 暂停自动刷新，仅手动刷新可请求上游。

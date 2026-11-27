@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
 logger = logging.getLogger(__name__)
 CACHE_SECONDS = 60
+CONCURRENCY_INTERVAL_SECONDS = 5
+CONCURRENCY_MAX_RETRY_SECONDS = 60
 USERS_CACHE_SECONDS = 300
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 300
 ACTIVITY_DAYS = 365
@@ -80,6 +82,10 @@ class UsageService:
         self.activity_lock = asyncio.Lock()
         self.activity_cache = {}
         self.snapshot_lock = asyncio.Lock()
+        self.concurrency_lock = asyncio.Lock()
+        self.concurrency_value = None
+        self.concurrency_deadline = 0.0
+        self.concurrency_retry = CONCURRENCY_INTERVAL_SECONDS
 
     @staticmethod
     def unpack_proxy(response, stage='查询'):
@@ -391,7 +397,6 @@ class UsageService:
             result = {
                 'updated_at': data.get('updated_at'),
                 **windows,
-                'concurrency': self.parse_concurrency(data.get('concurrency')),
                 'reset_credits': data.get('reset_credits') or {'available_count': None, 'credits': [], 'error': None},
                 'credits': data.get('credits') or {'has_credits': False, 'unlimited': False, 'balance': None},
             }
@@ -418,8 +423,7 @@ class UsageService:
                 raise HTTPException(502, '上游未返回有效的 7 天额度。')
             reset_credits, credits = await self.fetch_openai_quota()
             result = {'updated_at': data.get('updated_at'), **windows,
-                      'reset_credits': reset_credits, 'credits': credits,
-                      'concurrency': await self.fetch_concurrency()}
+                      'reset_credits': reset_credits, 'credits': credits}
             await self.record_snapshot_from_usage(result)
             return result
 
@@ -508,15 +512,38 @@ class UsageService:
         return {'current_in_use': current,
                 'max_capacity': capacity if type(capacity) is int and capacity > 0 else None}
 
+    async def get_concurrency(self):
+        async with self.concurrency_lock:
+            if time.monotonic() < self.concurrency_deadline:
+                return self.concurrency_value
+            value = await self.fetch_concurrency()
+            if value is None:
+                self.concurrency_retry = min(self.concurrency_retry * 2, CONCURRENCY_MAX_RETRY_SECONDS)
+            else:
+                self.concurrency_retry = CONCURRENCY_INTERVAL_SECONDS
+            self.concurrency_value = value
+            self.concurrency_deadline = time.monotonic() + self.concurrency_retry
+            return value
+
     async def fetch_concurrency(self):
         try:
-            response = await self.client.get(
-                '/api/v1/admin/ops/concurrency',
-                params={'timezone': self.tz},
-                headers={'Authorization': 'Bearer ' + self.token},
-                timeout=3.0,
-            )
-            data = self.unpack(response, stage='并发查询')
+            if self.proxy_url:
+                response = await self.client.get('api/concurrency', timeout=3.0)
+                return self.parse_concurrency(self.unpack_proxy(response, stage='并发查询'))
+            if not self.token or time.monotonic() >= self.token_deadline:
+                await self.login()
+            for attempt in range(2):
+                response = await self.client.get(
+                    '/api/v1/admin/ops/concurrency',
+                    params={'timezone': self.tz},
+                    headers={'Authorization': 'Bearer ' + self.token},
+                    timeout=3.0,
+                )
+                if response.status_code == 401 and attempt == 0:
+                    await self.login()
+                    continue
+                data = self.unpack(response, stage='并发查询')
+                break
         except (HTTPException, httpx.RequestError):
             return None
         accounts = data.get('account')
@@ -672,6 +699,14 @@ async def index():
 async def usage():
     from fastapi.responses import JSONResponse
     return JSONResponse(await app.state.usage.get(), headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/concurrency')
+async def concurrency():
+    from fastapi.responses import JSONResponse
+    value = await app.state.usage.get_concurrency()
+    return JSONResponse(value, status_code=200 if value is not None else 503,
+                        headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/api/config')

@@ -39,6 +39,7 @@ test('both endpoints keep separate sessions for matching page IDs and clean up o
   await runDaemon({
     ports: [9341, 9342], poller, signal: controller.signal, log: () => {},
     dependencies: {
+      concurrencyFetch: async () => null,
       verify: async () => {},
       targets: async () => [{ id: 'same-page', type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' }],
       connect: async (_url, port) => ({
@@ -70,6 +71,7 @@ test('listener verification runs only for new connections, not on every tick', {
   await runDaemon({
     port: 9341, poller, signal: controller.signal, log: () => {},
     dependencies: {
+      concurrencyFetch: async () => null,
       verify: async () => { verifyCalls++; },
       targets: async () => [{ id: 'p1', type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' }],
       connect: async () => {
@@ -114,6 +116,7 @@ test('forced refresh broadcasts the finished snapshot to every session before th
   await runDaemon({
     port: 9341, poller, signal: controller.signal, log: () => {},
     dependencies: {
+      concurrencyFetch: async () => null,
       verify: async () => {},
       targets: async () => ['p1', 'p2'].map(id => ({ id, type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' })),
       connect: async () => ({
@@ -144,6 +147,7 @@ test('binding requests are fetched immediately and deduplicated against polling'
   await runDaemon({
     port: 9341, poller, signal: controller.signal, log: () => {},
     dependencies: {
+      concurrencyFetch: async () => null,
       verify: async () => {},
       targets: async () => [{ id: 'p1', type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' }],
       usageFetch: async request => { fetchCalls++; return { page: request.page, users: [] }; },
@@ -186,6 +190,7 @@ test('busy binding requests are dropped and retried by the polling fallback', { 
   await runDaemon({
     port: 9341, poller, signal: controller.signal, log: () => {},
     dependencies: {
+      concurrencyFetch: async () => null,
       verify: async () => {},
       targets: async () => [{ id: 'p1', type: 'page', url: 'app://-/index.html', webSocketDebuggerUrl: 'unused' }],
       usageFetch: async request => { fetchCalls++; await gate; return { page: request.page, users: [] }; },

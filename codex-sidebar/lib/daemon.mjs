@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CDP, isAppTarget, listTargets } from './cdp.mjs';
-import { UsagePoller, fetchUserBreakdown, fetchTokenActivity } from './usage.mjs';
+import { UsagePoller, fetchConcurrency, fetchUserBreakdown, fetchTokenActivity } from './usage.mjs';
 import { assertWindowsListener } from './windows.mjs';
 
 const exec = promisify(execFile);
@@ -63,19 +63,39 @@ export async function removeWidgets(port) {
 }
 
 export async function runDaemon({ ports, port, poller = new UsagePoller(), ...options }) {
-  // Both instances share the same quota request/cache, but reconnect independently.
-  await Promise.all((ports || [port]).map(port => runEndpoint({ ...options, port, poller,
-    log: message => (options.log || console.log)(`[${port}] ${message}`) })));
+  const concurrencyFetch = options.dependencies?.concurrencyFetch || fetchConcurrency;
+  let concurrency = null;
+  let concurrencyDelay = 5000;
+  let concurrencyTimer;
+  const pollConcurrency = async () => {
+    try {
+      concurrency = await concurrencyFetch({ signal: options.signal });
+      concurrencyDelay = 5000;
+    } catch {
+      concurrency = null;
+      concurrencyDelay = Math.min(concurrencyDelay * 2, 60000);
+    } finally {
+      if (!options.signal.aborted) concurrencyTimer = setTimeout(pollConcurrency, concurrencyDelay);
+    }
+  };
+  if (!options.signal.aborted) void pollConcurrency();
+  try {
+    await Promise.all((ports || [port]).map(port => runEndpoint({ ...options, port, poller,
+      concurrency: () => concurrency,
+      log: message => (options.log || console.log)(`[${port}] ${message}`) })));
+  } finally {
+    clearTimeout(concurrencyTimer);
+  }
 }
 
-async function runEndpoint({ port, selector, theme = async () => 'auto', costEstimation = async () => false, signal, poller, log, dependencies = {} }) {
+async function runEndpoint({ port, selector, theme = async () => 'auto', costEstimation = async () => false, signal, poller, concurrency, log, dependencies = {} }) {
   const verify = dependencies.verify || assertAppListener;
   const targetsForPort = dependencies.targets || listTargets;
   const connect = dependencies.connect || ((url, port) => CDP.connect(url, { port }));
   const widget = await readFile(fileURLToPath(new URL('./widget.js', import.meta.url)), 'utf8');
   // The appearance choice lives in the state file, so the menu can switch a running
   // card without restarting the daemon.
-  const inject = async (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector, theme: await theme() }) }) }`);
+  const inject = async (client, snapshot) => client.evaluate(`if (${TRUSTED_PAGE}) { (${widget})(${JSON.stringify(snapshot)}, ${JSON.stringify({ selector, theme: await theme(), concurrency: concurrency() }) }) }`);
   const usageFetch = dependencies.usageFetch || fetchUserBreakdown;
   const activityFetch = dependencies.activityFetch || fetchTokenActivity;
   const sessions = new Map();
