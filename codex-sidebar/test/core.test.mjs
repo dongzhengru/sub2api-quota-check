@@ -186,9 +186,20 @@ test('ranking fetch sends date and pagination to fixed gateway, validates and st
     assert.equal(new URL(url).pathname,'/api/quota/api/user-breakdown');
     assert.equal(new URL(url).searchParams.get('page'),'2');
     assert.equal(options.redirect,'error');
-    return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,users:[{email:'test@example.com',cost:1.23456,secret:'drop'}]});
+    return Response.json({...query,timezone:'Asia/Shanghai',has_more:false,
+      direct_estimate:{status:'ok',calibration_mode:'auto',seven_day_cost_basis:200,total_quota_percent:10,direct_quota_percent:7,credits_delta:0,direct_cost:14,direct_tokens:7000000,sample_count:5,secret:'drop'},
+      users:[
+        {email:'test@example.com',cost:1.23456,secret:'drop'},
+        {user_id:0,email:'账号直登（估算）',requests:null,input_tokens:null,output_tokens:null,cache_tokens:null,total_tokens:7000000,cost:14,is_estimated:true,direct_usage:{quota_percent:7,total_quota_percent:10,credits_delta:0,sub2_cost:6,total_account_cost:20,seven_day_cost_basis:200,calibration_mode:'auto',sample_count:5,secret:'drop'}},
+      ]});
   }});
   assert.equal(result.users[0].secret,undefined);assert.equal(result.users[0].cost,1.23456);
+  assert.equal(result.users[0].is_estimated,undefined);
+  assert.equal(result.users[1].is_estimated,true);
+  assert.equal(result.users[1].direct_usage.quota_percent,7);
+  assert.equal(result.users[1].direct_usage.secret,undefined);
+  assert.equal(result.direct_estimate.status,'ok');
+  assert.equal(result.direct_estimate.secret,undefined);
   await assert.rejects(fetchUserBreakdown({...query,start_date:'2026-02-30'}),/参数无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({...query,users:[]})}),/数据无效/);
   await assert.rejects(fetchUserBreakdown(query,{fetcher:async()=>Response.json({detail:'管理员权限不足'},{status:403})}),/管理员权限不足/);

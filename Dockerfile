@@ -11,8 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --no-create-home app
 
-COPY --chown=app:app app.py ./
+COPY --chown=app:app app.py direct_usage.py ./
 COPY --chown=app:app static/ ./static/
+RUN mkdir -p /app/data && chown app:app /app/data
 
 USER app
 

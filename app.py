@@ -1,11 +1,13 @@
 import asyncio
 import copy
+import logging
 import math
 import os
 import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -14,10 +16,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from direct_usage import DirectUsageStore
+
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
+logger = logging.getLogger(__name__)
 CACHE_SECONDS = 60
 USERS_CACHE_SECONDS = 300
+DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 300
 ACTIVITY_DAYS = 365
 EXCLUDED_USER_EMAILS = {'system-check@sub2api.com'}
 TREND_FIELDS = ('requests', 'input_tokens', 'output_tokens', 'cache_creation_tokens',
@@ -25,14 +31,42 @@ TREND_FIELDS = ('requests', 'input_tokens', 'output_tokens', 'cache_creation_tok
 WINDOW_KEYS = ('five_hour', 'seven_day')
 
 
+def _parse_optional_positive_float(raw):
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _parse_nonneg_int(raw, default):
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return default
+    return max(0, value)
+
+
 class UsageService:
-    def __init__(self, client, email, password, account_id=1, tz='Asia/Shanghai', show_five_hour=True):
+    def __init__(self, client, email, password, account_id=1, tz='Asia/Shanghai',
+                 show_five_hour=True, store=None, snapshot_min_interval=DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+                 proxy_url=None):
         self.client = client
         self.email = email
         self.password = password
         self.account_id = account_id
         self.tz = tz
         self.show_five_hour = show_five_hour
+        self.store = store
+        self.snapshot_min_interval = max(0, int(snapshot_min_interval))
+        self.proxy_url = proxy_url.rstrip('/') if isinstance(proxy_url, str) and proxy_url.strip() else None
         self.token = None
         self.token_deadline = 0.0
         self.cached = None
@@ -45,6 +79,27 @@ class UsageService:
         self.users_deadline = 0.0
         self.activity_lock = asyncio.Lock()
         self.activity_cache = {}
+        self.snapshot_lock = asyncio.Lock()
+
+    @staticmethod
+    def unpack_proxy(response, stage='查询'):
+        if response.status_code >= 400:
+            detail = None
+            try:
+                body = response.json()
+                if isinstance(body, dict) and isinstance(body.get('detail'), str):
+                    detail = body['detail']
+            except ValueError:
+                pass
+            status = response.status_code if response.status_code in {400, 403, 404, 423, 503, 504} else 502
+            raise HTTPException(status, detail or '代理上游%s失败（HTTP %s）。' % (stage, response.status_code))
+        try:
+            payload = response.json()
+        except ValueError:
+            raise HTTPException(502, '代理上游%s返回无效 JSON。' % stage)
+        if not isinstance(payload, dict):
+            raise HTTPException(502, '代理上游%s返回数据格式无效。' % stage)
+        return payload
 
     async def directory(self):
         if self.users_cached is not None and time.monotonic() < self.users_deadline:
@@ -138,6 +193,24 @@ class UsageService:
             raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
 
     async def token_activity(self, user=None):
+        if self.proxy_url:
+            key = ('proxy', user or '')
+            async with self.activity_lock:
+                hit = self.activity_cache.get(key)
+                if hit and time.monotonic() < hit[0]:
+                    return copy.deepcopy(hit[1])
+                try:
+                    params = {'user': user} if user else None
+                    response = await self.client.get('api/token-activity', params=params)
+                    data = self.unpack_proxy(response, stage='Token Activity 查询')
+                except httpx.TimeoutException:
+                    raise HTTPException(504, '上游查询超时，请稍后重试。')
+                except httpx.RequestError:
+                    raise HTTPException(502, '无法连接上游服务，请检查网络后重试。')
+                now = time.monotonic()
+                self.activity_cache = {k: v for k, v in self.activity_cache.items() if now < v[0]}
+                self.activity_cache[key] = (now + CACHE_SECONDS, data)
+                return copy.deepcopy(data)
         end = datetime.now(ZoneInfo(self.tz)).date()
         start = end - timedelta(days=ACTIVITY_DAYS - 1)
         users = await self.directory()
@@ -162,6 +235,27 @@ class UsageService:
                 'users': [{'email': entry['email'], 'username': entry['username']} for entry in users],
                 'trend': copy.deepcopy(trend)}
 
+    async def _fetch_proxy_users(self, start_date, end_date, needed):
+        users = []
+        proxy_page = 1
+        upstream_has_more = False
+        while len(users) < needed and proxy_page <= 50:
+            response = await self.client.get(
+                'api/user-breakdown',
+                params={'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                        'page': proxy_page, 'page_size': 100},
+            )
+            data = self.unpack_proxy(response, stage='用户用量查询')
+            batch = data.get('users')
+            if not isinstance(batch, list) or any(not isinstance(u, dict) for u in batch):
+                raise HTTPException(502, '代理上游返回的用户用量数据无效。')
+            users.extend(u for u in batch if not u.get('is_estimated'))
+            upstream_has_more = bool(data.get('has_more'))
+            if not upstream_has_more or not batch:
+                break
+            proxy_page += 1
+        return users, upstream_has_more
+
     async def user_breakdown(self, start_date, end_date, page, page_size):
         if start_date > end_date:
             raise HTTPException(400, '开始日期不能晚于结束日期。')
@@ -170,27 +264,59 @@ class UsageService:
         offset = (page - 1) * page_size
         async with self.breakdown_lock:
             try:
-                if not self.token or time.monotonic() >= self.token_deadline:
-                    await self.login()
-                for attempt in range(2):
-                    response = await self.client.get(
-                        '/api/v1/admin/dashboard/user-breakdown',
-                        params={'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
-                                'sort_by': 'actual_cost', 'limit': offset + page_size + 1,
-                                'timezone': self.tz},
-                        headers={'Authorization': 'Bearer ' + self.token},
+                upstream_has_more = False
+                if self.proxy_url:
+                    users, upstream_has_more = await self._fetch_proxy_users(
+                        start_date, end_date, offset + page_size + 1
                     )
-                    if response.status_code == 401 and attempt == 0:
+                else:
+                    if not self.token or time.monotonic() >= self.token_deadline:
                         await self.login()
-                        continue
-                    data = self.unpack(response, stage='用户用量查询')
-                    users = data.get('users')
-                    if not isinstance(users, list) or any(not isinstance(user, dict) for user in users):
-                        raise HTTPException(502, '上游返回的用户用量数据无效。')
-                    return {'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
-                            'timezone': self.tz, 'users': users[offset:offset + page_size],
-                            'page': page, 'page_size': page_size,
-                            'has_more': len(users) > offset + page_size}
+                    for attempt in range(2):
+                        response = await self.client.get(
+                            '/api/v1/admin/dashboard/user-breakdown',
+                            params={'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                                    'sort_by': 'actual_cost', 'limit': offset + page_size + 1,
+                                    'timezone': self.tz},
+                            headers={'Authorization': 'Bearer ' + self.token},
+                        )
+                        if response.status_code == 401 and attempt == 0:
+                            await self.login()
+                            continue
+                        data = self.unpack(response, stage='用户用量查询')
+                        users = data.get('users')
+                        if not isinstance(users, list) or any(not isinstance(user, dict) for user in users):
+                            raise HTTPException(502, '上游返回的用户用量数据无效。')
+                        break
+                merged = list(users)
+                direct_estimate = None
+                if self.store is not None:
+                    try:
+                        estimate = await asyncio.to_thread(self.store.estimate_range, start_date, end_date)
+                        direct_row = estimate.pop('row', None)
+                        direct_estimate = estimate
+                        if direct_row is not None:
+                            def _rank_key(item):
+                                for field in ('actual_cost', 'cost'):
+                                    val = item.get(field)
+                                    if isinstance(val, (int, float)) and not isinstance(val, bool):
+                                        return float(val)
+                                return -1.0
+
+                            direct_key = _rank_key(direct_row)
+                            insert_at = len(merged)
+                            for idx, item in enumerate(merged):
+                                if direct_key > _rank_key(item):
+                                    insert_at = idx
+                                    break
+                            merged.insert(insert_at, direct_row)
+                    except Exception:
+                        logger.warning('计算账号直登估算用量失败，跳过直登估算。', exc_info=True)
+                return {'start_date': start_date.isoformat(), 'end_date': end_date.isoformat(),
+                        'timezone': self.tz, 'users': merged[offset:offset + page_size],
+                        'page': page, 'page_size': page_size,
+                        'has_more': len(merged) > offset + page_size or upstream_has_more,
+                        'direct_estimate': direct_estimate}
             except httpx.TimeoutException:
                 raise HTTPException(504, '上游查询超时，请稍后重试。')
             except httpx.RequestError:
@@ -240,6 +366,32 @@ class UsageService:
         self.token_deadline = time.monotonic() + max(0, expires - 30)
 
     async def fetch(self):
+        if self.proxy_url:
+            response = await self.client.get('api/usage')
+            data = self.unpack_proxy(response, stage='额度查询')
+            windows = {}
+            for key in WINDOW_KEYS:
+                raw = data.get(key)
+                if isinstance(raw, dict) and 'used_percent' in raw:
+                    windows[key] = self.parse_window({
+                        'utilization': raw.get('used_percent'),
+                        'resets_at': raw.get('resets_at'),
+                        'window_stats': raw.get('window_stats'),
+                    })
+                else:
+                    windows[key] = None
+            if not self.show_five_hour:
+                windows['five_hour'] = None
+            if not windows['seven_day']:
+                raise HTTPException(502, '代理上游未返回有效的 7 天额度。')
+            result = {
+                'updated_at': data.get('updated_at'),
+                **windows,
+                'reset_credits': data.get('reset_credits') or {'available_count': None, 'credits': [], 'error': None},
+                'credits': data.get('credits') or {'has_credits': False, 'unlimited': False, 'balance': None},
+            }
+            await self.record_snapshot_from_usage(result)
+            return result
         if not self.token or time.monotonic() >= self.token_deadline:
             await self.login()
         for attempt in range(2):
@@ -260,8 +412,68 @@ class UsageService:
             if not windows['seven_day']:
                 raise HTTPException(502, '上游未返回有效的 7 天额度。')
             reset_credits, credits = await self.fetch_openai_quota()
-            return {'updated_at': data.get('updated_at'), **windows,
-                    'reset_credits': reset_credits, 'credits': credits}
+            result = {'updated_at': data.get('updated_at'), **windows,
+                      'reset_credits': reset_credits, 'credits': credits}
+            await self.record_snapshot_from_usage(result)
+            return result
+
+    async def record_snapshot_from_usage(self, usage_result, force=False):
+        if self.store is None or not isinstance(usage_result, dict):
+            return False
+        async with self.snapshot_lock:
+            now_ts = time.time()
+            try:
+                last_ts = await asyncio.to_thread(self.store.last_snapshot_ts)
+                if (not force and last_ts is not None
+                        and self.snapshot_min_interval > 0
+                        and now_ts - last_ts < self.snapshot_min_interval):
+                    return False
+                w7 = usage_result.get('seven_day') or {}
+                w5 = usage_result.get('five_hour') or {}
+                credits = usage_result.get('credits') or {}
+                ws = w7.get('window_stats') if isinstance(w7.get('window_stats'), dict) else None
+                win_tokens = ws.get('tokens') if ws else None
+                win_cost = (ws.get('cost') if ws.get('cost') is not None else ws.get('standard_cost')) if ws else None
+                win_req = ws.get('requests', 0) if ws else 0
+                has_window_stats = (
+                    isinstance(win_tokens, (int, float)) and not isinstance(win_tokens, bool)
+                    and math.isfinite(win_tokens) and win_tokens >= 0
+                    and isinstance(win_cost, (int, float)) and not isinstance(win_cost, bool)
+                    and math.isfinite(win_cost) and win_cost >= 0
+                )
+                today_row, prev_row = {}, {}
+                if not has_window_stats:
+                    today = datetime.fromtimestamp(now_ts, tz=timezone.utc).astimezone(ZoneInfo(self.tz)).date()
+                    yesterday = today - timedelta(days=1)
+                    if self.proxy_url:
+                        response = await self.client.get('api/token-activity')
+                        activity = self.unpack_proxy(response, stage='Token Activity 查询')
+                        trend = activity.get('trend') if isinstance(activity.get('trend'), list) else []
+                    else:
+                        trend = await self.fetch_activity_trend(yesterday, today, user_id=None)
+                    by_date = {row['date']: row for row in trend if isinstance(row, dict) and isinstance(row.get('date'), str)}
+                    today_row = by_date.get(today.isoformat()) or {}
+                    prev_row = by_date.get(yesterday.isoformat()) or {}
+                await asyncio.to_thread(
+                    self.store.record_snapshot,
+                    ts=now_ts,
+                    seven_day_used=w7.get('used_percent'),
+                    seven_day_resets_at=w7.get('resets_at'),
+                    five_hour_used=w5.get('used_percent'),
+                    five_hour_resets_at=w5.get('resets_at'),
+                    credits_balance=credits.get('balance'),
+                    sub2_day_tokens=today_row.get('total_tokens', 0),
+                    sub2_day_cost=today_row.get('cost', 0.0),
+                    sub2_day_requests=today_row.get('requests', win_req if has_window_stats else 0),
+                    sub2_prev_day_tokens=prev_row.get('total_tokens') if not has_window_stats else None,
+                    sub2_prev_day_cost=prev_row.get('cost') if not has_window_stats else None,
+                    window_sub2_tokens=win_tokens if has_window_stats else None,
+                    window_sub2_cost=win_cost if has_window_stats else None,
+                )
+                return True
+            except Exception:
+                logger.warning('记录额度快照失败，不影响额度查询。', exc_info=True)
+                return False
 
     @staticmethod
     def parse_window(window):
@@ -353,18 +565,70 @@ class UsageService:
             return self.snapshot(False)
 
 
+def _build_snapshot_store(account_id, tz):
+    raw_path = os.getenv('SUB2API_SNAPSHOT_DB')
+    if raw_path is not None:
+        cleaned = raw_path.strip()
+        if cleaned.lower() in {'', '0', 'false', 'no', 'off', 'none'}:
+            return None
+        db_path = Path(cleaned)
+    else:
+        db_path = ROOT / 'data' / 'quota_snapshots.db'
+    return DirectUsageStore(
+        db_path=db_path,
+        account_id=account_id,
+        tz=tz,
+        seven_day_cost_override=_parse_optional_positive_float(os.getenv('SUB2API_SEVEN_DAY_COST_EQUIVALENT')),
+        credit_cost_ratio=_parse_optional_positive_float(os.getenv('SUB2API_CREDIT_COST_RATIO')) or 1.0,
+    )
+
+
+async def _snapshot_sampler_loop(service, interval_seconds):
+    while True:
+        try:
+            snapshot = await service.get()
+            await service.record_snapshot_from_usage(snapshot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug('后台额度快照采样跳过。', exc_info=True)
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app):
+    account_id = int(os.getenv('SUB2API_ACCOUNT_ID', '1'))
+    tz = os.getenv('SUB2API_TIMEZONE', 'Asia/Shanghai')
+    email = os.getenv('SUB2API_EMAIL')
+    password = os.getenv('SUB2API_PASSWORD')
+    proxy_url = (os.getenv('SUB2API_QUOTA_PROXY_URL') or '').strip().rstrip('/') or None
+    snapshot_interval = _parse_nonneg_int(
+        os.getenv('SUB2API_SNAPSHOT_INTERVAL_SECONDS'),
+        DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    )
+    store = _build_snapshot_store(account_id, tz)
+    base_url = (proxy_url + '/') if proxy_url else os.getenv('SUB2API_BASE_URL', 'https://gateway.zhengru.top').rstrip('/')
     async with httpx.AsyncClient(
-        base_url=os.getenv('SUB2API_BASE_URL', 'https://gateway.zhengru.top').rstrip('/'),
+        base_url=base_url,
         timeout=25.0, follow_redirects=False,
     ) as client:
-        app.state.usage = UsageService(
-            client, os.getenv('SUB2API_EMAIL'), os.getenv('SUB2API_PASSWORD'),
-            int(os.getenv('SUB2API_ACCOUNT_ID', '1')), os.getenv('SUB2API_TIMEZONE', 'Asia/Shanghai'),
+        service = UsageService(
+            client, email, password, account_id, tz,
             os.getenv('SUB2API_SHOW_FIVE_HOUR', 'true').strip().lower() not in {'0', 'false', 'no', 'off'},
+            store=store,
+            snapshot_min_interval=snapshot_interval if snapshot_interval > 0 else DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+            proxy_url=proxy_url,
         )
-        yield
+        app.state.usage = service
+        sampler_task = None
+        if store is not None and snapshot_interval > 0 and (proxy_url or (email and password)):
+            sampler_task = asyncio.create_task(_snapshot_sampler_loop(service, snapshot_interval))
+        try:
+            yield
+        finally:
+            if sampler_task is not None:
+                sampler_task.cancel()
+                await asyncio.gather(sampler_task, return_exceptions=True)
 
 
 app = FastAPI(title='Sub2API 额度面板', lifespan=lifespan)
@@ -397,6 +661,6 @@ async def user_breakdown(start_date: date, end_date: date,
 
 
 @app.get('/api/token-activity')
-async def token_activity(user: str | None = Query(None, min_length=1, max_length=254)):
+async def token_activity(user: Optional[str] = Query(None, min_length=1, max_length=254)):
     from fastapi.responses import JSONResponse
     return JSONResponse(await app.state.usage.token_activity(user), headers={'Cache-Control': 'no-store'})

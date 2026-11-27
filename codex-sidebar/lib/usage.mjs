@@ -98,6 +98,51 @@ export class UsagePoller {
 const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
 const TREND_FIELDS = ['requests','input_tokens','output_tokens','cache_creation_tokens','cache_read_tokens','total_tokens','cost','actual_cost'];
 
+function sanitizeDirectUsage(info) {
+  if (!info || typeof info !== 'object' || Array.isArray(info)) return null;
+  const num = k => (Number.isFinite(info[k]) ? info[k] : null);
+  const mode = ['manual', 'auto', 'pending'].includes(info.calibration_mode) ? info.calibration_mode : null;
+  const status = ['ok', 'zero', 'pending_calibration', 'collecting'].includes(info.status) ? info.status : null;
+  return {
+    status,
+    quota_percent: num('quota_percent'),
+    total_quota_percent: num('total_quota_percent'),
+    credits_delta: num('credits_delta'),
+    sub2_cost: num('sub2_cost'),
+    total_account_cost: num('total_account_cost'),
+    seven_day_cost_basis: num('seven_day_cost_basis'),
+    calibration_mode: mode,
+    sample_count: num('sample_count'),
+  };
+}
+
+function sanitizeDirectEstimate(info) {
+  if (!info || typeof info !== 'object' || Array.isArray(info)) return null;
+  const status = ['ok', 'zero', 'pending_calibration', 'collecting', 'no_data'].includes(info.status) ? info.status : null;
+  if (!status) return null;
+  const num = k => (Number.isFinite(info[k]) ? info[k] : null);
+  const mode = ['manual', 'auto', 'pending'].includes(info.calibration_mode) ? info.calibration_mode : null;
+  const ref = info.window_ref && typeof info.window_ref === 'object' && !Array.isArray(info.window_ref) ? {
+    used_percent: Number.isFinite(info.window_ref.used_percent) ? info.window_ref.used_percent : null,
+    sub2_cost: Number.isFinite(info.window_ref.sub2_cost) ? info.window_ref.sub2_cost : null,
+    sub2_tokens: Number.isFinite(info.window_ref.sub2_tokens) ? info.window_ref.sub2_tokens : null,
+    min_full_cost: Number.isFinite(info.window_ref.min_full_cost) ? info.window_ref.min_full_cost : null,
+    direct_cost: Number.isFinite(info.window_ref.direct_cost) ? info.window_ref.direct_cost : null,
+  } : null;
+  return {
+    status,
+    calibration_mode: mode,
+    seven_day_cost_basis: num('seven_day_cost_basis'),
+    total_quota_percent: num('total_quota_percent'),
+    direct_quota_percent: num('direct_quota_percent'),
+    credits_delta: num('credits_delta'),
+    direct_cost: num('direct_cost'),
+    direct_tokens: num('direct_tokens'),
+    sample_count: num('sample_count'),
+    window_ref: ref,
+  };
+}
+
 export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
   if (!query || !validDate(query.start_date) || !validDate(query.end_date) || query.start_date > query.end_date ||
       !Number.isInteger(query.page) || query.page < 1 || query.page > 10000 || ![20,50,100].includes(query.page_size)) {
@@ -118,10 +163,22 @@ export async function fetchUserBreakdown(query, { fetcher = fetch } = {}) {
       data.start_date !== query.start_date || data.end_date !== query.end_date || typeof data.timezone !== 'string') {
     throw new Error('用量接口返回数据无效');
   }
-  return { start_date: data.start_date, end_date: data.end_date, page:data.page, page_size:data.page_size,
-    timezone:data.timezone, has_more:data.has_more, users:data.users.map(user => Object.fromEntries(
-      ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost','actual_cost']
-        .map(key => [key, key === 'email' ? (typeof user[key] === 'string' ? user[key] : '') : (Number.isFinite(user[key]) ? user[key] : null)]))) };
+  return {
+    start_date: data.start_date, end_date: data.end_date, page: data.page, page_size: data.page_size,
+    timezone: data.timezone, has_more: data.has_more,
+    direct_estimate: sanitizeDirectEstimate(data.direct_estimate),
+    users: data.users.map(user => {
+      const clean = Object.fromEntries(
+        ['user_id','email','requests','input_tokens','output_tokens','cache_tokens','total_tokens','cost','actual_cost']
+          .map(key => [key, key === 'email' ? (typeof user[key] === 'string' ? user[key] : '') : (Number.isFinite(user[key]) ? user[key] : null)])
+      );
+      if (user.is_estimated === true) {
+        clean.is_estimated = true;
+        clean.direct_usage = sanitizeDirectUsage(user.direct_usage);
+      }
+      return clean;
+    }),
+  };
 }
 
 export async function fetchTokenActivity(query, { fetcher = fetch } = {}) {
